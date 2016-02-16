@@ -12,8 +12,8 @@ extern "C" {
  * Method:    init
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_doom119_ffs_FFS_init
-  (JNIEnv *, jclass);
+JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
+  (JNIEnv *, jclass, jstring);
 
 #ifdef __cplusplus
 }

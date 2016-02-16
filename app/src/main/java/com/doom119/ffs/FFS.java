@@ -10,5 +10,5 @@ public class FFS
         System.loadLibrary("FFS");
     }
 
-    public static native void init();
+    public static native int init(String videoPath);
 }

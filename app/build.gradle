@@ -1,0 +1,108 @@
+apply plugin: "com.android.model.application"
+
+model {
+    repositories {
+        libs(org.gradle.nativeplatform.PrebuiltLibraries) {
+            avcodec {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libavcodec-56.so")
+                }
+            }
+            avformat {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libavformat-56.so")
+                }
+            }
+            avfilter {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libavfilter-5.so")
+                }
+            }
+            avutil {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libavutil-54.so")
+                }
+            }
+            swresample {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libswresample-1.so")
+                }
+            }
+            swscale {
+                headers.srcDir "src/main/jni/include"
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libswscale-3.so")
+                }
+            }
+        }
+    }
+
+    android {
+        compileSdkVersion 22
+        buildToolsVersion "21.1.2"
+
+        defaultConfig {
+            applicationId "com.doom119.ffs"
+            minSdkVersion.apiLevel 21
+            targetSdkVersion.apiLevel 22
+            versionCode 1
+            versionName "1.0"
+        }
+
+        ndk {
+            moduleName = "FFS"
+//            cppFlags.add("-I${file("src/main/jni/include")}".toString())
+            ldLibs.addAll(["android", "log",
+                           "${file("libs/libavcodec-56.so")}".toString(),
+                           "${file("libs/libavfilter-5.so")}".toString(),
+                           "${file("libs/libavformat-56.so")}".toString(),
+                           "${file("libs/libavutil-54.so")}".toString(),
+                           "${file("libs/libswresample-1.so")}".toString(),
+                           "${file("libs/libswscale-3.so")}".toString()])
+            abiFilters.addAll(["armeabi-v7a"])
+        }
+
+        sources {
+            main {
+                jni {
+                    exportedHeaders {
+                        srcDir "src/main/jni/include"
+                    }
+                }
+                jniLibs {
+                    dependencies {
+                        library "avcodec"
+                        library "avformat"
+                        library "avfilter"
+                        library "avutil"
+                        library "swresample"
+                        library "swscale"
+                    }
+                }
+            }
+        }
+
+        buildTypes {
+            release {
+                minifyEnabled false
+                proguardFiles.add(file("proguard-rules.pro"))
+            }
+        }
+
+//        productFlavors {
+//            create("arm") {
+//                ndk.abiFilters.add("armeabi-v7a")
+//            }
+//        }
+    }
+}
+
+dependencies {
+    compile fileTree(dir: "libs", include: ["*.jar"])
+    compile "com.android.support:appcompat-v7:22.2.0"
+}

@@ -16,7 +16,22 @@ public class MainActivity extends AppCompatActivity
 
     public void init(View v)
     {
-        String videoPath = "/mnt/sdcard/1.mp4";
-        FFS.init(videoPath);
+        FFS.init();
+    }
+
+    public void open(View v)
+    {
+        String videoPath = "/mnt/sdcard/2.mp4";
+        FFS.open(videoPath);
+    }
+
+    public void decode(View v)
+    {
+        FFS.decode();
+    }
+
+    public void close(View v)
+    {
+        FFS.close();
     }
 }

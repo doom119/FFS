@@ -10,5 +10,8 @@ public class FFS
         System.loadLibrary("FFS");
     }
 
-    public static native int init(String videoPath);
+    public static native int init();
+    public static native int open(String videoPath);
+    public static native int decode();
+    public static native void close();
 }

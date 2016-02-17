@@ -13,7 +13,16 @@ extern "C" {
  * Signature: ()V
  */
 JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
-  (JNIEnv *, jclass, jstring);
+  (JNIEnv *, jclass);
+
+JNIEXPORT jint JNICALL
+Java_com_doom119_ffs_FFS_open(JNIEnv *env, jclass clazz, jstring videoPath);
+
+JNIEXPORT void JNICALL
+Java_com_doom119_ffs_FFS_close(JNIEnv *env, jclass clazz);
+
+JNIEXPORT jint JNICALL
+Java_com_doom119_ffs_FFS_decode(JNIEnv *env, jclass clazz);
 
 #ifdef __cplusplus
 }

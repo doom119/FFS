@@ -13,7 +13,8 @@ int videoStreamIndex = -1;
 
 void avlog_callback(void *x, int level, const char *fmt, va_list ap)
 {
-    LOGD(fmt, ap);
+    //LOGD(fmt, ap);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, fmt, ap);
 }
 
 JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
@@ -22,7 +23,7 @@ JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
     LOGD("init");
 
     av_register_all();
-//    av_log_set_callback(avlog_callback);
+    av_log_set_callback(avlog_callback);
 }
 
 JNIEXPORT jint JNICALL
@@ -35,7 +36,7 @@ Java_com_doom119_ffs_FFS_open(JNIEnv *env, jclass clazz, jstring videoPath)
     if(ret<0)
         return ret;
 
-    dump();
+    //dump();
 }
 
 JNIEXPORT jint JNICALL
@@ -49,23 +50,23 @@ Java_com_doom119_ffs_FFS_decode(JNIEnv *env, jclass clazz)
     int isFinished;
     struct swsContext* imgSwsContext;
 
-    pFrame = av_frame_alloc();
-    if(NULL == pFrame)
-    {
-        LOGD("av_frame_alloc error 1");
-        return -6;
-    }
-
-    pFrameRGB = av_frame_alloc();
-    if(NULL == pFrameRGB)
-    {
-        LOGD("av_frame_alloc error 2");
-        return -6;
-    }
-
-    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
-    buffer = av_malloc(numBytes);
-    avpicture_fill((AVPicture*)pFrameRGB, buffer, AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+//    pFrame = av_frame_alloc();
+//    if(NULL == pFrame)
+//    {
+//        LOGD("av_frame_alloc error 1");
+//        return -6;
+//    }
+//
+//    pFrameRGB = av_frame_alloc();
+//    if(NULL == pFrameRGB)
+//    {
+//        LOGD("av_frame_alloc error 2");
+//        return -6;
+//    }
+//
+//    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+//    buffer = av_malloc(numBytes);
+//    avpicture_fill((AVPicture*)pFrameRGB, buffer, AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
 
     //why crash here?
     av_read_frame(pCodecContext, &packet);
@@ -152,7 +153,6 @@ int open(JNIEnv *env, jstring videoPath)
         LOGE("avformat_open_input error:%d, %s", ret, av_err2str(ret));
         return -1;
     }
-    (*env)->ReleaseStringUTFChars(env, videoPath, path);
 
     ret = avformat_find_stream_info(pFormatContext, NULL);
     if(ret)
@@ -188,5 +188,6 @@ int open(JNIEnv *env, jstring videoPath)
         LOGD("avcodec_open2 error, %s", av_err2str(ret));
         return -5;
     }
-//    av_dump_format(pFormatContext, -1, path, 0);
+    //av_dump_format(pFormatContext, -1, path, 0);
+    (*env)->ReleaseStringUTFChars(env, videoPath, path);
 }

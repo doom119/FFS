@@ -4,9 +4,11 @@ echo $NDK_HOME
 SYSROOT=${NDK_HOME}/platforms/android-9/arch-arm/
 TOOLCHAIN=${NDK_HOME}/toolchains/arm-linux-androideabi-4.9/prebuilt/darwin-x86_64
 CC=${TOOLCHAIN}/bin/arm-linux-androideabi-gcc
+
 echo ${SYSROOT}
 echo ${TOOLCHAIN}
 echo ${CC}
+
 function build_one
 {
 ./configure \
@@ -20,10 +22,34 @@ function build_one
 --disable-network \
 --disable-pthreads \
 --disable-encoders \
+--enable-encoder=libx264 \
+--enable-encoder=libfaac \
+--enable-libx264 \
+--enable-libfaac \
 --disable-decoders \
+--enable-decoder=h264 \
+--enable-decoder=aac \
+--enable-decoder=mpeg4 \
+--enable-decoder=mpegvideo \
 --disable-parsers \
+--enable-parser=h264 \
+--enable-parser=ac3 \
+--enable-parser=mpeg4video \
+--enable-parser=mpegvideo \
+--enable-parser=mpegvideo \
+--enable-parser=ac3 \
+--enable-parser=h261 \
+--enable-parser=vc1 \
 --disable-muxers \
+--enable-muxer=h264 \
+--enable-muxer=aac \
+--enable-muxer=mpeg2video \
+--enable-muxer=mov \
 --disable-demuxers \
+--enable-demuxer=h264 \
+--enable-demuxer=aac \
+--enable-demuxer=mpegvideo \
+--enable-demuxer=mov \
 --disable-protocols \
 --enable-protocol=file \
 --disable-indevs \
@@ -47,10 +73,10 @@ function build_one
 --cpu=armv7-a \
 --disable-neon \
 --target-os=linux \
---extra-cflags="-g -DANDROID" \
+--extra-cflags="-g -DANDROID -I/usr/local/include" \
 --cross-prefix=$TOOLCHAIN/bin/arm-linux-androideabi- \
 --sysroot=$SYSROOT \
---extra-ldflags="-g"
+--extra-ldflags="-g -L/usr/local/lib"
 
 make clean
 make

@@ -1,0 +1,7 @@
+config.fate
+config.h
+config.mak
+doc/config.texi
+libavcodec/libavcodec.pc
+libavfilter/libavfilter.pc
+libavformat/libavformat.pc

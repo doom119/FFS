@@ -65,6 +65,7 @@ model {
                            "${file("libs/libswresample-1.so")}".toString(),
                            "${file("libs/libswscale-3.so")}".toString()])
             abiFilters.addAll(["armeabi-v7a"])
+            debuggable true
         }
 
         sources {

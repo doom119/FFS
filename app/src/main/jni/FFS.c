@@ -36,7 +36,7 @@ Java_com_doom119_ffs_FFS_open(JNIEnv *env, jclass clazz, jstring videoPath)
     if(ret<0)
         return ret;
 
-    //dump();
+    dump();
 }
 
 JNIEXPORT jint JNICALL
@@ -48,55 +48,53 @@ Java_com_doom119_ffs_FFS_decode(JNIEnv *env, jclass clazz)
     AVPacket packet;
     void* buffer = NULL;
     int isFinished;
-    struct swsContext* imgSwsContext;
+    struct swsContext* imgSwsContext = NULL;
 
-//    pFrame = av_frame_alloc();
-//    if(NULL == pFrame)
-//    {
-//        LOGD("av_frame_alloc error 1");
-//        return -6;
-//    }
-//
-//    pFrameRGB = av_frame_alloc();
-//    if(NULL == pFrameRGB)
-//    {
-//        LOGD("av_frame_alloc error 2");
-//        return -6;
-//    }
-//
-//    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
-//    buffer = av_malloc(numBytes);
-//    avpicture_fill((AVPicture*)pFrameRGB, buffer, AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+    pFrame = av_frame_alloc();
+    if(NULL == pFrame)
+    {
+        LOGD("av_frame_alloc error 1");
+        return -6;
+    }
 
-    //why crash here?
-    av_read_frame(pCodecContext, &packet);
-//    while(av_read_frame(pCodecContext, &packet) > 0)
-//    {
-//        if(packet.stream_index == videoStreamIndex)
-//        {
-//            avcodec_decode_video2(pCodecContext, pFrame, &isFinished, &packet);
-//            if(isFinished)
-//            {
-//                sws_getCachedContext(imgSwsContext, pCodecContext->width, pCodecContext->height,
-//                        pCodecContext->pix_fmt, pCodecContext->width, pCodecContext->height,
-//                        AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
-//                if(!imgSwsContext)
-//                {
-//                    LOGW("sws_getCachedContext error");
-//                    return -7;
-//                }
-//                sws_scale(imgSwsContext, pFrame->data, pFrame->linesize,
-//                        0, pCodecContext->height,
-//                        pFrameRGB->data, pFrameRGB->linesize);
-//            }
-//        }
-//        av_free_packet(&packet);
-//    }
+    pFrameRGB = av_frame_alloc();
+    if(NULL == pFrameRGB)
+    {
+        LOGD("av_frame_alloc error 2");
+        return -6;
+    }
 
-//    sws_freeContext(imgSwsContext);
-    av_frame_free(pFrameRGB);
-    //av_free(buffer);
-    av_frame_free(pFrame);
+    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+    buffer = av_malloc(numBytes);
+    avpicture_fill((AVPicture*)pFrameRGB, buffer, AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+
+    while(av_read_frame(pFormatContext, &packet) > 0)
+    {
+        if(packet.stream_index == videoStreamIndex)
+        {
+            avcodec_decode_video2(pCodecContext, pFrame, &isFinished, &packet);
+            if(isFinished)
+            {
+                sws_getCachedContext(imgSwsContext, pCodecContext->width, pCodecContext->height,
+                                     pCodecContext->pix_fmt, pCodecContext->width, pCodecContext->height,
+                                     AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+                if(!imgSwsContext)
+                {
+                    LOGW("sws_getCachedContext error");
+                    return -7;
+                }
+                sws_scale(imgSwsContext, pFrame->data, pFrame->linesize,
+                        0, pCodecContext->height,
+                        pFrameRGB->data, pFrameRGB->linesize);
+                sws_freeContext(imgSwsContext);
+            }
+        }
+        av_free_packet(&packet);
+    }
+
+    av_free(buffer);
+    av_frame_free(&pFrameRGB);
+    av_frame_free(&pFrame);
 }
 
 JNIEXPORT void JNICALL

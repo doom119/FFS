@@ -5,6 +5,7 @@
 #include "com_doom119_ffs_FFS.h"
 #include "libavformat/avformat.h"
 #include "FFS.h"
+#include "SDL2/SDL.h"
 
 AVFormatContext* pFormatContext = NULL;
 AVCodecContext* pCodecContext = NULL;
@@ -24,6 +25,12 @@ JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
 
     av_register_all();
     av_log_set_callback(avlog_callback);
+
+    SDL_SetMainReady();
+    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER))
+    {
+        LOGW("SDL_Init error, %s", SDL_GetError());
+    }
 }
 
 JNIEXPORT jint JNICALL
@@ -142,6 +149,7 @@ int open(JNIEnv *env, jstring videoPath)
 {
     int ret;
     jboolean isCopy;
+    AVCodecContext* pCodecCtxOrg = NULL;
 
     const char* path = (*env)->GetStringUTFChars(env, videoPath, &isCopy);
     LOGD("path=%s", path);
@@ -164,20 +172,30 @@ int open(JNIEnv *env, jstring videoPath)
     {
         if(pFormatContext->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         {
-            pCodecContext = pFormatContext->streams[i]->codec;
-            pCodec = avcodec_find_decoder(pCodecContext->codec_id);
             videoStreamIndex = i;
         }
     }
-    if(NULL == pCodecContext)
+    pCodecCtxOrg = pFormatContext->streams[videoStreamIndex]->codec;
+    pCodec = avcodec_find_decoder(pCodecCtxOrg->codec_id);
+    if(NULL == pCodecCtxOrg)
     {
-        LOGD("AVCodecContext is NULL");
+        LOGD("AVCodecContext original is NULL");
         return -3;
     }
     if(NULL == pCodec)
     {
         LOGD("AVCodec is NULL");
         return -4;
+    }
+
+    //note that we must not use AVCodecContext from the
+    //video stream directly according to dranger's tutorial
+    pCodecContext = avcodec_alloc_context3(pCodec);
+    ret = avcodec_copy_context(pCodecContext, pCodecCtxOrg);
+    if(ret)
+    {
+        LOGD("AVCodecContext copy is NULL, %s", av_err2str(ret));
+        return -3;
     }
 
     ret = avcodec_open2(pCodecContext, pCodec, NULL);

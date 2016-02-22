@@ -46,7 +46,7 @@ LOCAL_SRC_FILES := \
 	$(wildcard $(LOCAL_PATH)/src/video/android/*.c) \
 	$(wildcard $(LOCAL_PATH)/src/test/*.c))
 
-LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES
+LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -g
 LOCAL_LDLIBS := -ldl -lGLESv1_CM -lGLESv2 -llog -landroid
 
 include $(BUILD_SHARED_LIBRARY)

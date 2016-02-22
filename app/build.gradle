@@ -39,6 +39,11 @@ model {
                     sharedLibraryFile = file("libs/libswscale-3.so")
                 }
             }
+            SDL2 {
+                binaries.withType(SharedLibraryBinary) {
+                    sharedLibraryFile = file("libs/libSDL2.so")
+                }
+            }
         }
     }
 
@@ -57,13 +62,15 @@ model {
         ndk {
             moduleName = "FFS"
 //            cppFlags.add("-I${file("src/main/jni/include")}".toString())
-            ldLibs.addAll(["android", "log",
+            cppFlags.add("-DGL_GLEXT_PROTOTYPES")
+            ldLibs.addAll(["android", "log", "GLESv2", "GLESv1_CM",
                            "${file("libs/libavcodec-56.so")}".toString(),
                            "${file("libs/libavfilter-5.so")}".toString(),
                            "${file("libs/libavformat-56.so")}".toString(),
                            "${file("libs/libavutil-54.so")}".toString(),
                            "${file("libs/libswresample-1.so")}".toString(),
-                           "${file("libs/libswscale-3.so")}".toString()])
+                           "${file("libs/libswscale-3.so")}".toString(),
+                           "${file("libs/libSDL2.so")}".toString()])
             abiFilters.addAll(["armeabi-v7a"])
             debuggable true
         }
@@ -83,6 +90,7 @@ model {
                         library "avutil"
                         library "swresample"
                         library "swscale"
+                        library "SDL2"
                     }
                 }
             }

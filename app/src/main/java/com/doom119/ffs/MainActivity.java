@@ -1,22 +1,51 @@
 package com.doom119.ffs;
 
-import android.support.v7.app.AppCompatActivity;
+import android.app.Activity;
 import android.os.Bundle;
+import android.view.Surface;
+import android.view.SurfaceView;
 import android.view.View;
 
-public class MainActivity extends AppCompatActivity
+public class MainActivity extends Activity
 {
+    public static final String TAG = MainActivity.class.getSimpleName();
+
+    private SurfaceView mSufaceView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        mSufaceView = (SurfaceView)findViewById(R.id.surface_view);
+    }
+
+    @Override
+    protected void onResume()
+    {
+        super.onResume();
+        //SDL2.nativeResume();
+    }
+
+    @Override
+    protected void onPause()
+    {
+        super.onPause();
+        //SDL2.nativePause();
+    }
+
+    @Override
+    protected void onDestroy()
+    {
+        super.onDestroy();
+        FFS.close();
     }
 
     public void init(View v)
     {
-        FFS.init();
+        FFS.init(mSufaceView);
+        mSufaceView.setVisibility(View.VISIBLE);
     }
 
     public void open(View v)
@@ -32,6 +61,7 @@ public class MainActivity extends AppCompatActivity
 
     public void close(View v)
     {
+        mSufaceView.setVisibility(View.GONE);
         FFS.close();
     }
 }

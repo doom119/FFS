@@ -2,7 +2,7 @@
 // Created by Doom119 on 16/1/27.
 //
 #include <libswscale/swscale.h>
-#include "com_doom119_ffs_FFS.h"
+#include "com_doom119_ffs_FFMPEG.h"
 #include "libavformat/avformat.h"
 #include "FFS.h"
 #include "SDL2/SDL.h"
@@ -18,23 +18,17 @@ void avlog_callback(void *x, int level, const char *fmt, va_list ap)
     __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, fmt, ap);
 }
 
-JNIEXPORT int JNICALL Java_com_doom119_ffs_FFS_init
+JNIEXPORT int JNICALL Java_com_doom119_ffs_FFMPEG_init
 (JNIEnv *env, jclass clazz)
 {
     LOGD("init");
 
     av_register_all();
     av_log_set_callback(avlog_callback);
-
-    SDL_SetMainReady();
-    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER))
-    {
-        LOGW("SDL_Init error, %s", SDL_GetError());
-    }
 }
 
 JNIEXPORT jint JNICALL
-Java_com_doom119_ffs_FFS_open(JNIEnv *env, jclass clazz, jstring videoPath)
+Java_com_doom119_ffs_FFMPEG_open(JNIEnv *env, jclass clazz, jstring videoPath)
 {
     LOGD("open");
 
@@ -47,15 +41,30 @@ Java_com_doom119_ffs_FFS_open(JNIEnv *env, jclass clazz, jstring videoPath)
 }
 
 JNIEXPORT jint JNICALL
-Java_com_doom119_ffs_FFS_decode(JNIEnv *env, jclass clazz)
+Java_com_doom119_ffs_FFMPEG_decode(JNIEnv *env, jclass clazz)
 {
     LOGD("decode");
     AVFrame* pFrame = NULL;
-    AVFrame* pFrameRGB = NULL;
+    AVFrame*pFrameYUV = NULL;
     AVPacket packet;
     void* buffer = NULL;
     int isFinished;
     struct swsContext* imgSwsContext = NULL;
+
+    SDL_Window* sdlWindow = NULL;
+    SDL_Texture *sdlTexture = NULL;
+    SDL_Renderer *sdlRenderer = NULL;
+    SDL_Rect sdlRect;
+    SDL_Event sdlEvent;
+
+    imgSwsContext = sws_getContext(pCodecContext->width, pCodecContext->height,
+                         pCodecContext->pix_fmt, pCodecContext->width, pCodecContext->height,
+                         AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+    if(!imgSwsContext)
+    {
+        LOGW("sws_getCachedContext error");
+        return -7;
+    }
 
     pFrame = av_frame_alloc();
     if(NULL == pFrame)
@@ -64,48 +73,66 @@ Java_com_doom119_ffs_FFS_decode(JNIEnv *env, jclass clazz)
         return -6;
     }
 
-    pFrameRGB = av_frame_alloc();
-    if(NULL == pFrameRGB)
+    pFrameYUV = av_frame_alloc();
+    if(NULL == pFrameYUV)
     {
         LOGD("av_frame_alloc error 2");
         return -6;
     }
 
-    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
-    buffer = av_malloc(numBytes);
-    avpicture_fill((AVPicture*)pFrameRGB, buffer, AV_PIX_FMT_RGB24, pCodecContext->width, pCodecContext->height);
+    sdlWindow = SDL_CreateWindow("My Player", SDL_WINDOWPOS_UNDEFINED,
+                        SDL_WINDOWPOS_UNDEFINED, pCodecContext->width,
+                        pCodecContext->height, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_OPENGL);
+    LOGD("SDL Window=%d", sdlWindow);
+    sdlRenderer = SDL_CreateRenderer(sdlWindow, -1, 0);
+    LOGD("SDL Renderer=%d", sdlRenderer);
+    sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_YV12,
+                        SDL_TEXTUREACCESS_STREAMING, pCodecContext->width, pCodecContext->height);
+    LOGD("SDL Texture=%d", sdlTexture);
+    sdlRect.x = 0;
+    sdlRect.y = 0;
+    sdlRect.w = pCodecContext->width;
+    sdlRect.h = pCodecContext->height;
 
-    while(av_read_frame(pFormatContext, &packet) > 0)
+    int numBytes = avpicture_get_size(AV_PIX_FMT_YUV420P, pCodecContext->width, pCodecContext->height);
+    buffer = av_malloc(numBytes);
+    avpicture_fill((AVPicture*)pFrameYUV, buffer, AV_PIX_FMT_YUV420P, pCodecContext->width, pCodecContext->height);
+
+//    int size = pCodecContext->width * pCodecContext->height;
+//    packet = (AVPacket*)malloc(sizeof(AVPacket));
+//    av_new_packet(packet, size);
+    while(av_read_frame(pFormatContext, &packet) >= 0)
     {
         if(packet.stream_index == videoStreamIndex)
         {
             avcodec_decode_video2(pCodecContext, pFrame, &isFinished, &packet);
             if(isFinished)
             {
-                sws_getCachedContext(imgSwsContext, pCodecContext->width, pCodecContext->height,
-                                     pCodecContext->pix_fmt, pCodecContext->width, pCodecContext->height,
-                                     AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
-                if(!imgSwsContext)
-                {
-                    LOGW("sws_getCachedContext error");
-                    return -7;
-                }
                 sws_scale(imgSwsContext, pFrame->data, pFrame->linesize,
-                        0, pCodecContext->height,
-                        pFrameRGB->data, pFrameRGB->linesize);
-                sws_freeContext(imgSwsContext);
+                          0, pCodecContext->height,
+                          pFrameYUV->data, pFrameYUV->linesize);
+                SDL_UpdateYUVTexture(sdlTexture, &sdlRect,
+                        pFrameYUV->data[0], pFrameYUV->linesize[0],
+                        pFrameYUV->data[1], pFrameYUV->linesize[1],
+                        pFrameYUV->data[2], pFrameYUV->linesize[2]);
+                SDL_RenderClear(sdlRenderer);
+                SDL_RenderCopy(sdlRenderer, sdlTexture, &sdlRect, &sdlRect);
+                SDL_RenderPresent(sdlRenderer);
+                SDL_Delay(16);
             }
+            av_free_packet(&packet);
         }
-        av_free_packet(&packet);
     }
+    SDL_DestroyTexture(sdlTexture);
 
+    sws_freeContext(imgSwsContext);
     av_free(buffer);
-    av_frame_free(&pFrameRGB);
+    av_frame_free(&pFrameYUV);
     av_frame_free(&pFrame);
 }
 
 JNIEXPORT void JNICALL
-Java_com_doom119_ffs_FFS_close(JNIEnv *env, jclass clazz)
+Java_com_doom119_ffs_FFMPEG_close(JNIEnv *env, jclass clazz)
 {
     LOGD("close");
     avcodec_close(pCodecContext);

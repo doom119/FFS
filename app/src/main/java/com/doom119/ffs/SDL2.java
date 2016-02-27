@@ -17,12 +17,13 @@ public class SDL2
     {
         mSurfaceView = view;
 
-        return nativeInit();
+        return 0;
     }
 
     public static void close()
     {
         nativeQuit();
+        mSurfaceView = null;
     }
 
     /**

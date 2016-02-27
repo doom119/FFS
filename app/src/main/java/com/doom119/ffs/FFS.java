@@ -10,6 +10,7 @@ public class FFS
     static
     {
         System.loadLibrary("FFS");
+        System.loadLibrary("SDL2");
 //        System.loadLibrary("avcodec-56");
 //        System.loadLibrary("avfilter-5");
 //        System.loadLibrary("avformat-56");
@@ -18,31 +19,30 @@ public class FFS
 //        System.loadLibrary("swscale-3");
     }
 
+    public static long nativePlayerPtr;//native player pointer
+    private static native int nativeInit(String renderClass);
+    private static native int nativeOpen(String filename);
+    private static native int nativePlay();
+    private static native int nativeClose();
+
     public static int init(SurfaceView surfaceView)
     {
-        int ret = 0;
-        ret = FFMPEG.init();
         SDL2.init(surfaceView);
-        return ret;
+        return nativeInit("com/doom119/ffs/SDL2");
     }
 
-    public static int open(String videoPath)
+    public static int open(String filename)
     {
-        int ret = 0;
-        ret = FFMPEG.open(videoPath);
-        return ret;
+        return nativeOpen(filename);
     }
 
-    public static int decode()
+    public static int play()
     {
-        int ret = 0;
-        ret = FFMPEG.decode();
-        return ret;
+        return nativePlay();
     }
 
-    public static void close()
+    public static int close()
     {
-        FFMPEG.close();
-        SDL2.close();
+        return nativeClose();
     }
 }

@@ -39,7 +39,7 @@ public class MainActivity extends Activity
     protected void onDestroy()
     {
         super.onDestroy();
-        FFS.close();
+//        FFS.close();
     }
 
     public void init(View v)
@@ -54,9 +54,9 @@ public class MainActivity extends Activity
         FFS.open(videoPath);
     }
 
-    public void decode(View v)
+    public void play(View v)
     {
-        FFS.decode();
+        FFS.play();
     }
 
     public void close(View v)

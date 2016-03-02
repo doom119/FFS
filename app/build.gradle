@@ -63,7 +63,7 @@ model {
             moduleName = "FFS"
 //            cppFlags.add("-I${file("src/main/jni/include")}".toString())
             cppFlags.add("-DGL_GLEXT_PROTOTYPES")
-            ldLibs.addAll(["android", "log", "GLESv2", "GLESv1_CM",
+            ldLibs.addAll(["android", "log", "GLESv2", "GLESv1_CM", "OpenSLES",
                            "${file("libs/libavcodec-56.so")}".toString(),
                            "${file("libs/libavfilter-5.so")}".toString(),
                            "${file("libs/libavformat-56.so")}".toString(),

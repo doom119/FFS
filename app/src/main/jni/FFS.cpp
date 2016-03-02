@@ -4,6 +4,7 @@
 #include "FFS.h"
 #include "FFmpegPlayer.h"
 #include "SDLRenderer.h"
+#include "OpenSLAudio.h"
 
 JavaVM *globalVM = 0;
 
@@ -39,12 +40,14 @@ Java_com_doom119_ffs_FFS_nativeInit(JNIEnv *env, jclass cls, jstring renderCls)
     IRenderer *pRenderer = new SDLRenderer(renderClassPath);
     env->ReleaseStringUTFChars(renderCls, renderClassPath);
 
+    IAudio *pAudio = new OpenSLAudio();
+
     void* ptrPlayer = getPlayerPtr(env, cls);
     if(NULL != ptrPlayer)
         delete ptrPlayer;
     setPlayerPtr(env, cls, (jlong)pPlayer);
 
-    return pPlayer->init(pRenderer);
+    return pPlayer->init(pRenderer, pAudio);
 }
 
 JNIEXPORT jint JNICALL

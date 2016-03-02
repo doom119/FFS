@@ -6,13 +6,14 @@
 #define FFS_IPLAYER_H
 
 #include "IRenderer.h"
+#include "IAudio.h"
 
 namespace FFS
 {
     class IPlayer
     {
     public:
-        virtual int init(IRenderer *renderer) = 0;
+        virtual int init(IRenderer *renderer, IAudio *audio) = 0;
         virtual IRenderer* getRenderer() = 0;
         virtual int open(const char* filename) = 0;
         virtual int play() = 0;

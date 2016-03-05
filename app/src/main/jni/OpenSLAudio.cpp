@@ -3,8 +3,12 @@
 //
 
 #include "OpenSLAudio.h"
+#include <unistd.h>
 
 using namespace FFS;
+
+Mutex gMutex;
+
 int OpenSLAudio::init()
 {
     LOGD("OpenSLAudio init");
@@ -115,7 +119,7 @@ int OpenSLAudio::init()
         LOGW("init failed, SLPlayerObject GetInterface BufferQueue, %d", result);
         return AUDIO_ERROR_INIT;
     }
-    (*m_bufferQueue)->RegisterCallback(m_bufferQueue, OpenSLAudio::playerCallback, NULL);
+    (*m_bufferQueue)->RegisterCallback(m_bufferQueue, OpenSLAudio::playerCallback, &m_audioDataList);
 
     result = (*m_playerObject)->GetInterface(m_playerObject, SL_IID_VOLUME, &m_volumeInterface);
     if(SL_RESULT_SUCCESS != result)
@@ -129,23 +133,57 @@ int OpenSLAudio::init()
     return 0;
 }
 
-int OpenSLAudio::play(void* data, uint32_t size)
+int OpenSLAudio::play(uint8_t* data, uint32_t size)
 {
-    LOGD("OpenSLAudio play, data=%d, size=%d", data, size);
-    if(size <= 0)
+    LOGD("OpenSLAudio play, data=%d, size=%d, tid=%d", data, size, gettid());
+    if(size <= 0 || NULL == data)
         return AUDIO_ERROR_PLAY;
 
-    SLresult result;
-    result = (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
-    if(SL_RESULT_SUCCESS != result)
+
+    AutoMutex lock(gMutex);
+    if(m_audioDataList.size() == 0)
     {
-        LOGW("OpenSLAudio play error");
-        return AUDIO_ERROR_PLAY;
+        (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
     }
+    else
+    {
+        AudioData *pAudioData = new AudioData();
+        pAudioData->data = new uint8_t[size];
+        memcpy(pAudioData->data, data, size);
+        pAudioData->size = size;
+        m_audioDataList.push_back(pAudioData);
+        LOGD("OpenSLAudio play, list size=%d", m_audioDataList.size());
+    }
+
+//    if(!m_bIsFirst)
+//    {
+//        (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
+//        m_bIsFirst = true;
+//        return 0;
+//    }
+
     return 0;
 }
 
 void OpenSLAudio::playerCallback(SLAndroidSimpleBufferQueueItf bufferQueueItf, void *context)
 {
-    LOGD("OpenSLAudio playerCallback");
+    if(NULL == context)
+        return;
+
+    AutoMutex lock(gMutex);
+    List<AudioData*>* pDataList = (List<AudioData*>*)context;
+    LOGD("OpenSLAudio playerCallback, list size=%d, tid=%d", pDataList->size(), gettid());
+    if(pDataList->size() <= 0)
+        return;
+
+    SLresult result;
+
+    List<AudioData*>::iterator it = pDataList->begin();
+    //LOGD("OpenSLAudio it=%d, data=%d, size=%d", *it, (*it)->data, (*it)->size);
+    result = (*bufferQueueItf)->Enqueue(bufferQueueItf, (*it)->data, (*it)->size);
+    pDataList->erase(it);
+    if(SL_RESULT_SUCCESS != result)
+    {
+        LOGW("OpenSLAudio play error");
+    }
 }

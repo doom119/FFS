@@ -13,7 +13,7 @@ namespace FFS
     {
     public:
         virtual int init() = 0;
-        virtual int play(void* data, uint32_t size) = 0;
+        virtual int play(uint8_t* data, uint32_t size) = 0;
     };
 };
 

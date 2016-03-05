@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "FFS.h"
+#include "utils/List.h"
+#include "utils/Mutex.h"
 #include <SLES/OpenSLES_Android.h>
 
 #ifndef FFS_OPENSLAUDIO_H
@@ -14,6 +16,12 @@
 
 namespace FFS
 {
+    typedef struct
+    {
+        uint8_t *data;
+        uint32_t size;
+    }AudioData;
+
     class OpenSLAudio : public IAudio
     {
     public:
@@ -21,14 +29,14 @@ namespace FFS
                         m_engineInterface(NULL), m_playInterface(NULL),
                         m_effectSendInterface(NULL), m_volumeInterface(NULL)
         {
-
+            m_bIsFirst = false;
         }
 
         virtual ~OpenSLAudio(){}
 
     public:
         int init();
-        int play(void* data, uint32_t size);
+        int play(uint8_t* data, uint32_t size);
         static void playerCallback(SLAndroidSimpleBufferQueueItf bufferQueueItf, void *context);
 
     private:
@@ -42,6 +50,9 @@ namespace FFS
         SLVolumeItf m_volumeInterface;
 
         SLAndroidSimpleBufferQueueItf m_bufferQueue;
+
+        List<AudioData*> m_audioDataList;
+        bool m_bIsFirst;
     };
 };
 

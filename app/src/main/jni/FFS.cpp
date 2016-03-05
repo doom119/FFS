@@ -5,6 +5,7 @@
 #include "FFmpegPlayer.h"
 #include "SDLRenderer.h"
 #include "OpenSLAudio.h"
+#include <unistd.h>
 
 JavaVM *globalVM = 0;
 
@@ -35,6 +36,7 @@ void setPlayerPtr(JNIEnv* env, jclass cls, jlong ptr)
 JNIEXPORT jint JNICALL
 Java_com_doom119_ffs_FFS_nativeInit(JNIEnv *env, jclass cls, jstring renderCls)
 {
+    LOGD("nativeInit, tid=%d", gettid());
     const char* renderClassPath = env->GetStringUTFChars(renderCls, NULL);
     IPlayer *pPlayer = new FFmpegPlayer(renderClassPath);
     IRenderer *pRenderer = new SDLRenderer(renderClassPath);

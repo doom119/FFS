@@ -11,6 +11,9 @@ extern "C"
 #include "libavutil/error.h"
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
+#include "libswresample/swresample.h"
+#include "libavutil/error.h"
+#include "libavutil/opt.h"
 };
 
 #include "FFS.h"
@@ -43,6 +46,12 @@ namespace FFS
         int stop();
         int close();
         void dump();
+        int AudioResampling(AVCodecContext * audio_dec_ctx,
+                            AVFrame * pAudioDecodeFrame,
+                            int out_sample_fmt,
+                            int out_channels,
+                            int out_sample_rate,
+                            uint8_t* out_buf);
 
     public:
         virtual ~FFmpegPlayer()
@@ -50,6 +59,9 @@ namespace FFS
             if(NULL != m_pRenderer)
                 delete m_pRenderer;
         }
+
+    private:
+        int audio_decode_frame(AVCodecContext *aCodecCtx, AVPacket& pkt, uint8_t *audio_buf, int buf_size);
 
     private:
         IRenderer *m_pRenderer;

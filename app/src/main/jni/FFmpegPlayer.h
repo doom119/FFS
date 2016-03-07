@@ -19,6 +19,9 @@ extern "C"
 #include "FFS.h"
 #include "IPlayer.h"
 #include "IAudio.h"
+#include "utils/List.h"
+#include "utils/Thread.h"
+#include "utils/Mutex.h"
 
 #define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
 
@@ -30,15 +33,16 @@ namespace FFS
         FFmpegPlayer(const char* renderClass):
                 m_sRenderClass(renderClass), m_pFormatCtx(NULL),
                 m_pVideoCodec(NULL), m_pAudioCodec(NULL), m_pAudioCodecCtx(NULL),
-                m_pVideoCodecCtx(NULL), m_bIsInited(false),
-                m_pRenderer(NULL), m_pAudio(NULL)
+                m_pVideoCodecCtx(NULL), m_bIsInited(false), m_pSwrContext(NULL),
+                m_pRenderer(NULL), m_pAudio(NULL), m_pSwsContext(NULL)
         {
             memset(m_aFileName, 0, sizeof(m_aFileName));
+            m_listVideoPacket = new List<AVPacket>();
+            m_listAudioPacket = new List<AVPacket>();
         }
 
     public:
         int init(IRenderer *renderer, IAudio* audio);
-        IRenderer* getRenderer();
         int open(const char* filename);
         int play();
         int pause();
@@ -46,12 +50,23 @@ namespace FFS
         int stop();
         int close();
         void dump();
-        int AudioResampling(AVCodecContext * audio_dec_ctx,
-                            AVFrame * pAudioDecodeFrame,
-                            int out_sample_fmt,
-                            int out_channels,
-                            int out_sample_rate,
-                            uint8_t* out_buf);
+
+    public:
+        AVFormatContext* getFormatContext() { return m_pFormatCtx; }
+        AVCodecContext* getVideoCodecContext() { return m_pVideoCodecCtx; }
+        AVCodecContext* getAudioCodecContext() { return m_pAudioCodecCtx; }
+        AVCodec* getVideoCodec() { return m_pVideoCodec; }
+        AVCodec* getAudioCodec() { return m_pAudioCodec; }
+        SwsContext* getSwsContext() { return m_pSwsContext; }
+        SwrContext* getSwrContext() { return m_pSwrContext; }
+        IAudio* getAudio() { return m_pAudio; }
+        IRenderer* getRenderer() { return m_pRenderer; }
+        int getVideoStreamIndex() { return m_nVideoStream; }
+        int getAudioStreamIndex() { return m_nAudioStream; }
+        List<AVPacket>* getVideoPacketList() { return m_listVideoPacket; }
+        List<AVPacket>* getAudioPacketList() { return m_listAudioPacket; }
+        bool isDecodeFinished() { return m_bIsDecodeFinished; }
+        bool setDecodeFinished(bool b) { m_bIsDecodeFinished = b; }
 
     public:
         virtual ~FFmpegPlayer()
@@ -61,7 +76,15 @@ namespace FFS
         }
 
     private:
-        int audio_decode_frame(AVCodecContext *aCodecCtx, AVPacket& pkt, uint8_t *audio_buf, int buf_size);
+        static void* decodeInternal(void* args);
+        static void* playInternal(void* args);
+        static int audioResampling(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVFrame * pAudioDecodeFrame,
+                            int out_sample_fmt,
+                            int out_channels,
+                            int out_sample_rate,
+                            uint8_t* out_buf);
+        static int decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVPacket &pkt, uint8_t *audio_buf,
+                             int buf_size);
 
     private:
         IRenderer *m_pRenderer;
@@ -73,11 +96,20 @@ namespace FFS
         AVCodec *m_pVideoCodec;
         AVCodecContext *m_pAudioCodecCtx;
         AVCodec *m_pAudioCodec;
+        SwsContext *m_pSwsContext;
+        SwrContext *m_pSwrContext;
         int m_nVideoStream;
         int m_nAudioStream;
         char m_aFileName[1024];
 
+        Thread m_decodeThread;
+        Thread m_playThread;
+
+        List<AVPacket>* m_listVideoPacket;
+        List<AVPacket>* m_listAudioPacket;
+
         bool m_bIsInited;
+        bool m_bIsDecodeFinished;
     };
 };
 

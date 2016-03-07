@@ -12,17 +12,25 @@
 
 namespace FFS
 {
-    typedef void* (*ENTRYPOINT)(void);
+    typedef void* (*ENTRYPOINT)(void*);
 
     class Thread
     {
     public:
+        Thread():m_nThreadId(0),m_bIsFinished(false)
+        {
+
+        }
         Thread(const char* threadName):m_strName(threadName), m_nThreadId(0),
-                    m_bIsFinished(false) {};
+                    m_bIsFinished(false)
+        {
+
+        }
         uint32_t start(ENTRYPOINT entry, void* args);
         void exit();
+        virtual ~Thread(){};
+
     private:
-        ~Thread(){};
         static void* run(void* args);
 
     private:

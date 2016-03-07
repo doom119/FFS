@@ -2,9 +2,12 @@
 // Created by Doom119 on 16/2/26.
 //
 
+#include <SDL2/SDL_timer.h>
 #include "FFmpegPlayer.h"
+#include "utils/Mutex.h"
 
 using namespace FFS;
+Mutex gPlayerMutex;
 
 void avlog_callback(void *x, int level, const char *fmt, va_list ap)
 {
@@ -46,12 +49,6 @@ int FFmpegPlayer::init(IRenderer *renderer, IAudio* audio)
     return 0;
 }
 
-IRenderer* FFmpegPlayer::getRenderer()
-{
-    LOGD("FFmpegPlayer getRenderer");
-    return m_pRenderer;
-}
-
 int FFmpegPlayer::open(const char *filename)
 {
     av_strlcpy(m_aFileName, filename, sizeof(m_aFileName));
@@ -60,7 +57,6 @@ int FFmpegPlayer::open(const char *filename)
     int ret = avformat_open_input(&m_pFormatCtx, m_aFileName, NULL, NULL);
     if (ret)
     {
-//        LOGE("avformat_open_input error:%d, %s", ret, av_err2str(ret));
         LOGW("avformat_open_input error, %d", ret);
         return PLAYER_ERROR_OPEN;
     }
@@ -68,7 +64,6 @@ int FFmpegPlayer::open(const char *filename)
     ret = avformat_find_stream_info(m_pFormatCtx, NULL);
     if (ret)
     {
-//        LOGD("avformat_find_stream_info error, %s", av_err2str(ret));
         LOGW("avformat_find_stream_info error, %d", ret);
         return PLAYER_ERROR_OPEN;
     }
@@ -88,7 +83,6 @@ int FFmpegPlayer::open(const char *filename)
             ret = avcodec_copy_context(m_pVideoCodecCtx, pCodecCtx);
             if (ret)
             {
-        //        LOGD("AVCodecContext copy is NULL, %s", av_err2str(ret));
                 LOGW("AVCodecContext video copy failed, %d", ret);
                 return PLAYER_ERROR_OPEN;
             }
@@ -96,7 +90,6 @@ int FFmpegPlayer::open(const char *filename)
             ret = avcodec_open2(m_pVideoCodecCtx, m_pVideoCodec, NULL);
             if (ret)
             {
-        //        LOGD("avcodec_open2 error, %s", av_err2str(ret));
                 LOGW("avcodec_open2 video failed, %d", ret);
                 return PLAYER_ERROR_OPEN;
             }
@@ -113,7 +106,6 @@ int FFmpegPlayer::open(const char *filename)
             ret = avcodec_copy_context(m_pAudioCodecCtx, pCodecCtx);
             if (ret)
             {
-                //        LOGD("AVCodecContext copy is NULL, %s", av_err2str(ret));
                 LOGW("AVCodecContext audio copy failed, %d", ret);
                 return PLAYER_ERROR_OPEN;
             }
@@ -121,7 +113,6 @@ int FFmpegPlayer::open(const char *filename)
             ret = avcodec_open2(m_pAudioCodecCtx, m_pAudioCodec, NULL);
             if (ret)
             {
-                //        LOGD("avcodec_open2 error, %s", av_err2str(ret));
                 LOGW("avcodec_open2 audio failed, %d", ret);
                 return PLAYER_ERROR_OPEN;
             }
@@ -130,6 +121,17 @@ int FFmpegPlayer::open(const char *filename)
 
     LOGD("video stream index=%d, audio stream index=%d", m_nVideoStream, m_nAudioStream);
 
+    m_pSwsContext = sws_getContext(
+                         m_pVideoCodecCtx->width, m_pVideoCodecCtx->height,
+                         m_pVideoCodecCtx->pix_fmt,
+                         m_pVideoCodecCtx->width, m_pVideoCodecCtx->height,
+                         AV_PIX_FMT_YUV420P,
+                         SWS_BICUBIC, NULL, NULL, NULL);
+    m_pSwrContext = swr_alloc_set_opts(NULL, AV_CH_LAYOUT_MONO, AV_SAMPLE_FMT_S16, 48000,
+                         m_pAudioCodecCtx->channel_layout, m_pAudioCodecCtx->sample_fmt,
+                         m_pAudioCodecCtx->sample_rate, 0, NULL);
+    swr_init(m_pSwrContext);
+
     dump();
 
     return 0;
@@ -137,44 +139,88 @@ int FFmpegPlayer::open(const char *filename)
 
 int FFmpegPlayer::play()
 {
-    LOGD("FFmpegPlayer play");
+    m_bIsDecodeFinished = false;
+    m_decodeThread.start(decodeInternal, this);
+    m_playThread.start(playInternal, this);
+}
+
+void* FFmpegPlayer::decodeInternal(void* args)
+{
+    LOGD("FFmpegPlayer decodeInternal");
+    FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
+    AVFormatContext *pFormatCtx = pPlayer->getFormatContext();
+    int videoStream = pPlayer->getVideoStreamIndex();
+    int audioStream = pPlayer->getAudioStreamIndex();
+    List<AVPacket>* videoPacketList = pPlayer->getVideoPacketList();
+    List<AVPacket>* audioPacketList = pPlayer->getAudioPacketList();
+    AVPacket packet;
+
+    while (av_read_frame(pFormatCtx, &packet) >= 0)
+    {
+        if (packet.stream_index == videoStream)
+        {
+            gPlayerMutex.lock();
+            videoPacketList->push_back(packet);
+            LOGD("decodeInternal, video size=%d", videoPacketList->size());
+            gPlayerMutex.unlock();
+        }
+        else if(packet.stream_index == audioStream)
+        {
+            gPlayerMutex.lock();
+            audioPacketList->push_back(packet);
+            LOGD("decodeInternal, audio size=%d", audioPacketList->size());
+            gPlayerMutex.unlock();
+        }
+        else
+        {
+            av_free_packet(&packet);
+        }
+    }
+
+//    pPlayer->setDecodeFinished(true);
+}
+
+void* FFmpegPlayer::playInternal(void* args)
+{
+    LOGD("FFmpegPlayer playInternal");
+    FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
+    AVCodecContext *pVideoCodecCtx = pPlayer->getVideoCodecContext();
+    AVCodecContext *pAudioCodecCtx = pPlayer->getAudioCodecContext();
+    SwrContext* pSwrContext = pPlayer->getSwrContext();
+    SwsContext* pSwsContext = pPlayer->getSwsContext();
+    IRenderer* pRenderer = pPlayer->getRenderer();
+    IAudio* pAudio = pPlayer->getAudio();
+    List<AVPacket>* videoPacketList = pPlayer->getVideoPacketList();
+    List<AVPacket>* audioPacketList = pPlayer->getAudioPacketList();
 
     AVFrame *pFrameData = NULL;
     AVFrame *pFrameYUV = NULL;
     AVFrame *pFrameAudio = NULL;
-    AVPacket packet;
-    int got;
     void *buffer = NULL;
-    struct swsContext *imgSwsCtx = NULL;
+    int got = 0;
     uint8_t audio_buf[AVCODEC_MAX_AUDIO_FRAME_SIZE * 2];
 
-    imgSwsCtx = (struct swsContext *)sws_getContext(
-                           m_pVideoCodecCtx->width, m_pVideoCodecCtx->height,
-                           m_pVideoCodecCtx->pix_fmt,
-                           m_pVideoCodecCtx->width, m_pVideoCodecCtx->height,
-                           AV_PIX_FMT_YUV420P,
-                           SWS_BICUBIC, NULL, NULL, NULL);
-    if (!imgSwsCtx)
-    {
-        LOGW("sws_getCachedContext failed");
-        return PLAYER_ERROR_PLAY;
-    }
     pFrameData = av_frame_alloc();
     pFrameYUV = av_frame_alloc();
     pFrameAudio = av_frame_alloc();
 
-    int numBytes = avpicture_get_size(AV_PIX_FMT_YUV420P, m_pVideoCodecCtx->width,
-                                      m_pVideoCodecCtx->height);
+    int numBytes = avpicture_get_size(AV_PIX_FMT_YUV420P, pVideoCodecCtx->width,
+                                      pVideoCodecCtx->height);
     buffer = av_malloc(numBytes);
     avpicture_fill((AVPicture *) pFrameYUV, (const uint8_t *)buffer, AV_PIX_FMT_YUV420P,
-                   m_pVideoCodecCtx->width, m_pVideoCodecCtx->height);
-
-    m_pRenderer->createSurface(m_pVideoCodecCtx->width, m_pVideoCodecCtx->height);
-    while (av_read_frame(m_pFormatCtx, &packet) >= 0)
+                   pVideoCodecCtx->width, pVideoCodecCtx->height);
+    pRenderer->createSurface(pVideoCodecCtx->width, pVideoCodecCtx->height);
+    while(!pPlayer->isDecodeFinished())
     {
-        if (packet.stream_index == m_nVideoStream)
+        gPlayerMutex.lock();
+        if(videoPacketList->size() > 0)
         {
-            int len = avcodec_decode_video2(m_pVideoCodecCtx, pFrameData, &got, &packet);
+//            LOGD("playInternal, video size=%d", videoPacketList->size());
+            List<AVPacket>::iterator it = videoPacketList->begin();
+            videoPacketList->erase(it);
+            AVPacket packet = *it;
+
+            int len = avcodec_decode_video2(pVideoCodecCtx, pFrameData, &got, &packet);
             if(len < 0)
             {
                 LOGW("FFmpegPlayer, avcodec_decode_video2 error");
@@ -182,99 +228,63 @@ int FFmpegPlayer::play()
             }
             if (got)
             {
-                sws_scale((SwsContext *) imgSwsCtx, (const uint8_t *const *) pFrameData->data,
-                          pFrameData->linesize, 0, m_pVideoCodecCtx->height,
+                sws_scale(pSwsContext, (const uint8_t *const *) pFrameData->data,
+                          pFrameData->linesize, 0, pVideoCodecCtx->height,
                           pFrameYUV->data, pFrameYUV->linesize);
-                m_pRenderer->render(pFrameYUV->data[0], pFrameYUV->linesize[0],
+                pRenderer->render(pFrameYUV->data[0], pFrameYUV->linesize[0],
                                     pFrameYUV->data[1], pFrameYUV->linesize[1],
                                     pFrameYUV->data[2], pFrameYUV->linesize[2]);
             }
+
             av_free_packet(&packet);
         }
-        else if(packet.stream_index == m_nAudioStream)
+
+        if(audioPacketList->size() > 0)
         {
-            int audio_size = audio_decode_frame(m_pAudioCodecCtx, packet, audio_buf, sizeof(audio_buf));
-            m_pAudio->play(audio_buf, audio_size);
+            LOGD("playInternal, audio size=%d", audioPacketList->size());
+            List<AVPacket>::iterator it = audioPacketList->begin();
+            audioPacketList->erase(it);
 
-//            int len = avcodec_decode_audio4(m_pAudioCodecCtx, pFrameAudio, &got, &packet);
-//            if (len < 0)
-//            {
-//                LOGW("avcodec_decode_audio4 failed");
-//                continue;
-//            }
-//            if (got)
-//            {
+            AVPacket packet = *it;
 
-//                int plane_size;
-//                int planar = av_sample_fmt_is_planar(m_pAudioCodecCtx->sample_fmt);
-//                int data_size = av_samples_get_buffer_size(&plane_size, m_pAudioCodecCtx->channels,
-//                                           pFrameAudio->nb_samples, m_pAudioCodecCtx->sample_fmt, 1);
-//                LOGD("planar=%d, plane_size=%d, data_size=%d", planar, plane_size, data_size);
-//
-//                m_pAudio->play(pFrameAudio->data[0], pFrameAudio->linesize[0]);
-//            }
+            int audio_size = decodeAudioFrame(pAudioCodecCtx, pSwrContext, packet, audio_buf,
+                                              sizeof(audio_buf));
+            pAudio->play(audio_buf, audio_size);
+
             av_free_packet(&packet);
         }
+        gPlayerMutex.unlock();
+        SDL_Delay(50);
     }
-    m_pRenderer->destroySurface();
+    pRenderer->destroySurface();
 
-    sws_freeContext((SwsContext *) imgSwsCtx);
     av_free(buffer);
     av_frame_free(&pFrameAudio);
     av_frame_free(&pFrameYUV);
     av_frame_free(&pFrameData);
-    return 0;
+    LOGD("playInternal end");
 }
 
-int FFmpegPlayer::audio_decode_frame(AVCodecContext *aCodecCtx, AVPacket& pkt,
-                                     uint8_t *audio_buf, int buf_size)
+int FFmpegPlayer::decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrContext,
+                                   AVPacket &pkt, uint8_t *audio_buf, int buf_size)
 {
-    LOGD("FFmpegPlayer audio_decode_frame, buf size=%d", buf_size);
+    LOGD("FFmpegPlayer decodeAudioFrame, buf size=%d", buf_size);
     static uint8_t *audio_pkt_data = NULL;
     static int audio_pkt_size = 0;
-    static int out_linesize = 0;
     static AVFrame frame;
-    static SwrContext *swrContext = NULL;
     static uint32_t data_size = 0;
     static uint32_t len1 = 0;
-
-    data_size = av_samples_get_buffer_size(&out_linesize,
-                                           aCodecCtx->channels,
-                                           aCodecCtx->frame_size,
-                                           aCodecCtx->sample_fmt,
-                                           1);
-    if(data_size < 0)
-    {
-        LOGW("FFmpegPlayer audio_decode_frame, av_samples_get_buffer_size failed");
-        return PLAYER_ERROR_PLAY;
-    }
-    uint8_t out_buffer[data_size];
-
-    swrContext = swr_alloc_set_opts(NULL, AV_CH_LAYOUT_STEREO, AV_SAMPLE_FMT_S16, 44100,
-                        m_pAudioCodecCtx->channel_layout, m_pAudioCodecCtx->sample_fmt,
-                        m_pAudioCodecCtx->sample_rate, 0, NULL);
-    if(NULL == swrContext)
-    {
-        LOGW("FFmpegPlayer audio_decode_frame, SwrContext is NULL");
-        return PLAYER_ERROR_PLAY;
-    }
-    int ret = swr_init(swrContext);
-    if(ret < 0)
-    {
-        LOGW("FFmpegPlayer audio_decode_frame, SwrContext init failed, ret=%d", ret);
-        return PLAYER_ERROR_PLAY;
-    }
 
     for (; ;)
     {
         while (audio_pkt_size > 0)
         {
             int got_frame = 0;
-            len1 = avcodec_decode_audio4(aCodecCtx, &frame, &got_frame, &pkt);
+            len1 = avcodec_decode_audio4(pCodecCtx, &frame, &got_frame, &pkt);
             if (len1 < 0)
             {
                 /* if error, skip frame */
-                LOGW("audio_decode_frame, len1=%d", len1);
+                LOGW("decodeAudioFrame, len1=%d", len1);
                 audio_pkt_size = 0;
                 break;
             }
@@ -283,15 +293,8 @@ int FFmpegPlayer::audio_decode_frame(AVCodecContext *aCodecCtx, AVPacket& pkt,
             data_size = 0;
             if (got_frame)
             {
-//                data_size = av_samples_get_buffer_size(&out_linesize,
-//                                                       aCodecCtx->channels,
-//                                                       frame.nb_samples,
-//                                                       aCodecCtx->sample_fmt,
-//                                                       1);
-//                memcpy(audio_buf, out_buffer, data_size);
-
-                data_size = AudioResampling(aCodecCtx, &frame, AV_SAMPLE_FMT_S16, frame.channels, frame.sample_rate, audio_buf);
-                LOGD("FFmpegPlayer audio_decode_frame, data_size=%d", data_size);
+                data_size = audioResampling(pCodecCtx, pSwrContext, &frame, AV_SAMPLE_FMT_S16, frame.channels, frame.sample_rate, audio_buf);
+//                LOGD("FFmpegPlayer decodeAudioFrame, data_size=%d", data_size);
             }
             if (data_size <= 0)
             {
@@ -304,7 +307,6 @@ int FFmpegPlayer::audio_decode_frame(AVCodecContext *aCodecCtx, AVPacket& pkt,
 
         audio_pkt_data = pkt.data;
         audio_pkt_size = pkt.size;
-        LOGD("FFmpegPlayer audio_decode_frame, pkt.size=%d", pkt.size);
     }
 }
 
@@ -325,8 +327,12 @@ int FFmpegPlayer::stop()
 
 int FFmpegPlayer::close()
 {
+    sws_freeContext(m_pSwsContext);
+    swr_free(&m_pSwrContext);
     avcodec_close(m_pVideoCodecCtx);
     avformat_close_input(&m_pFormatCtx);
+    m_bIsInited = false;
+    m_bIsDecodeFinished = true;
     return 0;
 }
 
@@ -356,30 +362,28 @@ void FFmpegPlayer::dump()
         int codec_id = pCodeCtx->codec_id;
         int bit_rate = pCodeCtx->bit_rate;
         int gop_size = pCodeCtx->gop_size;
-        int sampleRate = pCodeCtx->sample_rate;
+        int sample_rate = pCodeCtx->sample_rate;
         int channels = pCodeCtx->channels;
         int channel_layout = pCodeCtx->channel_layout;
+        int samples_fmt = pCodeCtx->sample_fmt;
         LOGD("codec_type=%d, coded_width=%d, coded_height=%d", codec_type, coded_width,
              coded_height);
         LOGD("codec_id=%d, bit_rate=%d, gop_size=%d", codec_id, bit_rate, gop_size);
-        LOGD("sample rate=%d, channels=%d, channel_layout=%d", sampleRate, channels, channel_layout);
+        LOGD("sample rate=%d, channels=%d, channel_layout=%d, samples_fmt=%d", sample_rate, channels, channel_layout, samples_fmt);
         LOGD("width=%d, height=%d", width, height);
         LOGD("******** end dump AVCodecContext ********");
     }
 }
 
-int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
-                           AVFrame * pAudioDecodeFrame,
+int FFmpegPlayer::audioResampling(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVFrame * pAudioDecodeFrame,
                            int out_sample_fmt,
                            int out_channels,
                            int out_sample_rate,
                            uint8_t* out_buf)
 {
-    SwrContext * swr_ctx = NULL;
-    int data_size = 0;
     int ret = 0;
-    int64_t src_ch_layout = audio_dec_ctx->channel_layout;
-    int64_t dst_ch_layout = AV_CH_LAYOUT_STEREO;
+    int64_t src_ch_layout = pCodecCtx->channel_layout;
+    int64_t dst_ch_layout = AV_CH_LAYOUT_MONO;
     int dst_nb_channels = 0;
     int dst_linesize = 0;
     int src_nb_samples = 0;
@@ -388,17 +392,10 @@ int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
     uint8_t **dst_data = NULL;
     int resampled_data_size = 0;
 
-    swr_ctx = swr_alloc();
-    if (!swr_ctx)
-    {
-        LOGW("swr_alloc error \n");
-        return -1;
-    }
-
-    src_ch_layout = (audio_dec_ctx->channels ==
-                     av_get_channel_layout_nb_channels(audio_dec_ctx->channel_layout)) ?
-                    audio_dec_ctx->channel_layout :
-                    av_get_default_channel_layout(audio_dec_ctx->channels);
+    src_ch_layout = (pCodecCtx->channels ==
+                     av_get_channel_layout_nb_channels(pCodecCtx->channel_layout)) ?
+                    pCodecCtx->channel_layout :
+                    av_get_default_channel_layout(pCodecCtx->channels);
 
     if (out_channels == 1)
     {
@@ -429,21 +426,21 @@ int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
         return -1;
     }
 
-    av_opt_set_int(swr_ctx, "in_channel_layout", src_ch_layout, 0);
-    av_opt_set_int(swr_ctx, "in_sample_rate", audio_dec_ctx->sample_rate, 0);
-    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", audio_dec_ctx->sample_fmt, 0);
-
-    av_opt_set_int(swr_ctx, "out_channel_layout", dst_ch_layout, 0);
-    av_opt_set_int(swr_ctx, "out_sample_rate", out_sample_rate, 0);
-    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", (AVSampleFormat)out_sample_fmt, 0);
-
-    if ((ret = swr_init(swr_ctx)) < 0) {
-        LOGW("Failed to initialize the resampling context\n");
-        return -1;
-    }
+//    av_opt_set_int(swr_ctx, "in_channel_layout", src_ch_layout, 0);
+//    av_opt_set_int(swr_ctx, "in_sample_rate", m_pAudioCodecCtx->sample_rate, 0);
+//    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", m_pAudioCodecCtx->sample_fmt, 0);
+//
+//    av_opt_set_int(swr_ctx, "out_channel_layout", dst_ch_layout, 0);
+//    av_opt_set_int(swr_ctx, "out_sample_rate", out_sample_rate, 0);
+//    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", (AVSampleFormat)out_sample_fmt, 0);
+//
+//    if ((ret = swr_init(swr_ctx)) < 0) {
+//        LOGW("Failed to initialize the resampling context\n");
+//        return -1;
+//    }
 
     max_dst_nb_samples = dst_nb_samples = av_rescale_rnd(src_nb_samples,
-                                                         out_sample_rate, audio_dec_ctx->sample_rate, AV_ROUND_UP);
+                                                         out_sample_rate, pCodecCtx->sample_rate, AV_ROUND_UP);
     if (max_dst_nb_samples <= 0)
     {
         LOGW("av_rescale_rnd error \n");
@@ -460,8 +457,8 @@ int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
     }
 
 
-    dst_nb_samples = av_rescale_rnd(swr_get_delay(swr_ctx, audio_dec_ctx->sample_rate) +
-                                    src_nb_samples, out_sample_rate, audio_dec_ctx->sample_rate, AV_ROUND_UP);
+    dst_nb_samples = av_rescale_rnd(swr_get_delay(pSwrContext, pCodecCtx->sample_rate) +
+                                    src_nb_samples, out_sample_rate, pCodecCtx->sample_rate, AV_ROUND_UP);
     if (dst_nb_samples <= 0)
     {
         LOGW("av_rescale_rnd error \n");
@@ -475,9 +472,9 @@ int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
         max_dst_nb_samples = dst_nb_samples;
     }
 
-    if (swr_ctx)
+    if (pSwrContext)
     {
-        ret = swr_convert(swr_ctx, dst_data, dst_nb_samples,
+        ret = swr_convert(pSwrContext, dst_data, dst_nb_samples,
                           (const uint8_t **)pAudioDecodeFrame->data, pAudioDecodeFrame->nb_samples);
         if (ret < 0)
         {
@@ -508,9 +505,5 @@ int FFmpegPlayer::AudioResampling(AVCodecContext * audio_dec_ctx,
     av_freep(&dst_data);
     dst_data = NULL;
 
-    if (swr_ctx)
-    {
-        swr_free(&swr_ctx);
-    }
     return resampled_data_size;
 }

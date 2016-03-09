@@ -7,7 +7,8 @@
 #include "utils/Mutex.h"
 
 using namespace FFS;
-Mutex gPlayerMutex;
+Mutex gPlayVideoMutex;
+Mutex gPlayAudioMutex;
 
 void avlog_callback(void *x, int level, const char *fmt, va_list ap)
 {
@@ -140,8 +141,9 @@ int FFmpegPlayer::open(const char *filename)
 int FFmpegPlayer::play()
 {
     m_bIsDecodeFinished = false;
+    m_playVideoThread.start(playVideoInternal, this);
+    m_playAudioThread.start(playAudioInternal, this);
     m_decodeThread.start(decodeInternal, this);
-    m_playThread.start(playInternal, this);
 }
 
 void* FFmpegPlayer::decodeInternal(void* args)
@@ -153,6 +155,10 @@ void* FFmpegPlayer::decodeInternal(void* args)
     int audioStream = pPlayer->getAudioStreamIndex();
     List<AVPacket*>* videoPacketList = pPlayer->getVideoPacketList();
     List<AVPacket*>* audioPacketList = pPlayer->getAudioPacketList();
+    Mutex& videoMutex = pPlayer->getVideoMutex();
+    Condition& videoCnd = pPlayer->getVideoCondition();
+    Mutex& audioMutex = pPlayer->getAudioMutex();
+    Condition& audioCnd = pPlayer->getAudioCondition();
     AVPacket packet;
 
     while (av_read_frame(pFormatCtx, &packet) >= 0)
@@ -162,20 +168,23 @@ void* FFmpegPlayer::decodeInternal(void* args)
             AVPacket *p = new AVPacket();
             av_dup_packet(&packet);
             av_copy_packet(p, &packet);
-            gPlayerMutex.lock();
+            videoMutex.lock();
             videoPacketList->push_back(p);
-            LOGD("decodeInternal, video size=%d", videoPacketList->size());
-            gPlayerMutex.unlock();
+            LOGD("FFmpegPlayer decodeInternal, video size=%d", videoPacketList->size());
+            videoCnd.signal();
+            videoMutex.unlock();
         }
         else if(packet.stream_index == audioStream)
         {
             AVPacket *p = new AVPacket();
             av_dup_packet(&packet);
             av_copy_packet(p, &packet);
-            gPlayerMutex.lock();
+//            gPlayAudioMutex.lock();
+            audioMutex.lock();
             audioPacketList->push_back(p);
-            LOGD("decodeInternal, audio size=%d", audioPacketList->size());
-            gPlayerMutex.unlock();
+            LOGD("FFmpegPlayer decodeInternal, audio size=%d", audioPacketList->size());
+            audioCnd.signal();
+            audioMutex.unlock();
         }
         else
         {
@@ -186,56 +195,52 @@ void* FFmpegPlayer::decodeInternal(void* args)
 //    pPlayer->setDecodeFinished(true);
 }
 
-void* FFmpegPlayer::playInternal(void* args)
+void* FFmpegPlayer::playVideoInternal(void* args)
 {
-    LOGD("FFmpegPlayer playInternal");
+    LOGD("FFmpegPlayer playVideoInternal");
     FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
     AVCodecContext *pVideoCodecCtx = pPlayer->getVideoCodecContext();
-    AVCodecContext *pAudioCodecCtx = pPlayer->getAudioCodecContext();
-    AVFormatContext *pFormatCtc = pPlayer->getFormatContext();
-    SwrContext* pSwrContext = pPlayer->getSwrContext();
     SwsContext* pSwsContext = pPlayer->getSwsContext();
     IRenderer* pRenderer = pPlayer->getRenderer();
-    IAudio* pAudio = pPlayer->getAudio();
     List<AVPacket*>* videoPacketList = pPlayer->getVideoPacketList();
-    List<AVPacket*>* audioPacketList = pPlayer->getAudioPacketList();
+    Mutex& videoMutex = pPlayer->getVideoMutex();
+    Condition& videoCnd = pPlayer->getVideoCondition();
     int videoIndex = pPlayer->getVideoStreamIndex();
-    int audioIndex = pPlayer->getAudioStreamIndex();
 
     AVFrame *pFrameData = NULL;
     AVFrame *pFrameYUV = NULL;
-    AVFrame *pFrameAudio = NULL;
     void *buffer = NULL;
     int got = 0;
-    uint8_t audio_buf[AVCODEC_MAX_AUDIO_FRAME_SIZE * 2];
 
     pFrameData = av_frame_alloc();
     pFrameYUV = av_frame_alloc();
-    pFrameAudio = av_frame_alloc();
 
     int numBytes = avpicture_get_size(AV_PIX_FMT_YUV420P, pVideoCodecCtx->width,
                                       pVideoCodecCtx->height);
     buffer = av_malloc(numBytes);
     avpicture_fill((AVPicture *) pFrameYUV, (const uint8_t *)buffer, AV_PIX_FMT_YUV420P,
                    pVideoCodecCtx->width, pVideoCodecCtx->height);
+
     pRenderer->createSurface(pVideoCodecCtx->width, pVideoCodecCtx->height);
     while(!pPlayer->isDecodeFinished())
     {
-        AVPacket *pVideoPacket, *pAudioPacket;
-        gPlayerMutex.lock();
-        if(videoPacketList->size() > 0)
+        AVPacket *pVideoPacket = NULL;
+
+        videoMutex.lock();
+        if(videoPacketList->size() == 0)
         {
-            List<AVPacket*>::iterator it = videoPacketList->begin();
-            videoPacketList->erase(it);
-            pVideoPacket = *it;
+            LOGD("FFmpegPlayer playVideoInternal wait");
+            videoCnd.wait(videoMutex);
         }
-        if(audioPacketList->size() > 0)
+        List<AVPacket*>::iterator it = videoPacketList->begin();
+        videoPacketList->erase(it);
+        pVideoPacket = *it;
+        videoMutex.unlock();
+        if(pVideoPacket == NULL)
         {
-            List<AVPacket*>::iterator it = audioPacketList->begin();
-            audioPacketList->erase(it);
-            pAudioPacket = *it;
+            LOGD("FFmpegPlayer playVideoInternal, get video packet error");
+            continue;
         }
-        gPlayerMutex.unlock();
 
 //        LOGD("playInternal, stream index=%d", pPlayer->getVideoStreamIndex());
         if(pVideoPacket->stream_index == videoIndex)
@@ -247,14 +252,14 @@ void* FFmpegPlayer::playInternal(void* args)
             int len = avcodec_decode_video2(pVideoCodecCtx, pFrameData, &got, pVideoPacket);
             if(len < 0)
             {
-                LOGW("FFmpegPlayer, avcodec_decode_video2 error");
+                LOGW("FFmpegPlayer playVideoInternal, avcodec_decode_video2 error");
                 continue;
             }
             if (got)
             {
                 int64_t pts = av_frame_get_best_effort_timestamp(pFrameData);
 //                pts *= av_q2d(pFormatCtc->streams[videoIndex]->time_base);
-                LOGD("playInternal pts=%llu", pts);
+                LOGD("FFmpegPlayer playVideoInternal pts=%llu", pts);
                 sws_scale(pSwsContext, (const uint8_t *const *) pFrameData->data,
                           pFrameData->linesize, 0, pVideoCodecCtx->height,
                           pFrameYUV->data, pFrameYUV->linesize);
@@ -265,38 +270,78 @@ void* FFmpegPlayer::playInternal(void* args)
 
             gettimeofday(&end, NULL);
             int cost = 1000000 * (end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
-            LOGD("playInternal, video cost=%d", cost);
+            LOGD("FFmpegPlayer playVideoInternal, video cost=%d", cost);
             av_free_packet(pVideoPacket);
         }
-        if(pAudioPacket->stream_index == audioIndex)
-        {
-            struct timeval start, end;
-            gettimeofday(&start, NULL);
-            LOGD("playInternal, audio size=%d", audioPacketList->size());
 
-
-            int audio_size = decodeAudioFrame(pAudioCodecCtx, pSwrContext, *pAudioPacket, audio_buf,
-                                              sizeof(audio_buf));
-            pAudio->play(audio_buf, audio_size);
-
-            gettimeofday(&end, NULL);
-            int cost = 1000000 * (end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
-            LOGD("playInternal, audio cost=%d", cost);
-            av_free_packet(pAudioPacket);
-        }
         SDL_Delay(10);
     }
     pRenderer->destroySurface();
 
     av_free(buffer);
-    av_frame_free(&pFrameAudio);
     av_frame_free(&pFrameYUV);
     av_frame_free(&pFrameData);
-    LOGD("playInternal end");
+}
+
+void* FFmpegPlayer::playAudioInternal(void* args)
+{
+    LOGD("FFmpegPlayer playAudioInternal");
+    FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
+    AVCodecContext *pAudioCodecCtx = pPlayer->getAudioCodecContext();
+    SwrContext* pSwrContext = pPlayer->getSwrContext();
+    IAudio* pAudio = pPlayer->getAudio();
+    List<AVPacket*>* audioPacketList = pPlayer->getAudioPacketList();
+    Mutex& audioMutex = pPlayer->getAudioMutex();
+    Condition& audioCnd = pPlayer->getAudioCondition();
+    int audioIndex = pPlayer->getAudioStreamIndex();
+
+    AVFrame *pFrameAudio = NULL;
+    pFrameAudio = av_frame_alloc();
+    uint8_t audio_buf[AVCODEC_MAX_AUDIO_FRAME_SIZE * 2];
+
+    while(!pPlayer->isDecodeFinished())
+    {
+        AVPacket *pAudioPacket = NULL;
+
+        audioMutex.lock();
+        if(audioPacketList->size() == 0)
+        {
+            LOGD("FFmpegPlayer playAudioInternal, wait");
+            audioCnd.wait(audioMutex);
+        }
+        List<AVPacket*>::iterator it = audioPacketList->begin();
+        audioPacketList->erase(it);
+        pAudioPacket = *it;
+        audioMutex.unlock();
+        if(pAudioPacket == NULL)
+        {
+            LOGD("FFmpegPlayer playAudioInternal, get audio packet error");
+            continue;
+        }
+
+        if(pAudioPacket->stream_index == audioIndex)
+        {
+            struct timeval start, end;
+            gettimeofday(&start, NULL);
+            LOGD("FFmpegPlayer playAudioInternal, audio size=%d", audioPacketList->size());
+
+            int audio_size = decodeAudioFrame(pAudioCodecCtx, pSwrContext, pAudioPacket, audio_buf,
+                                              sizeof(audio_buf));
+            pAudio->play(audio_buf, audio_size);
+
+            gettimeofday(&end, NULL);
+            int cost = 1000000 * (end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
+            LOGD("FFmpegPlayer playAudioInternal, audio cost=%d", cost);
+            av_free_packet(pAudioPacket);
+        }
+        SDL_Delay(10);
+    }
+
+    av_frame_free(&pFrameAudio);
 }
 
 int FFmpegPlayer::decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrContext,
-                                   AVPacket &pkt, uint8_t *audio_buf, int buf_size)
+                                   AVPacket *pkt, uint8_t *audio_buf, int buf_size)
 {
     LOGD("FFmpegPlayer decodeAudioFrame, buf size=%d", buf_size);
     static uint8_t *audio_pkt_data = NULL;
@@ -310,7 +355,7 @@ int FFmpegPlayer::decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrCo
         while (audio_pkt_size > 0)
         {
             int got_frame = 0;
-            len1 = avcodec_decode_audio4(pCodecCtx, &frame, &got_frame, &pkt);
+            len1 = avcodec_decode_audio4(pCodecCtx, &frame, &got_frame, pkt);
             if (len1 < 0)
             {
                 /* if error, skip frame */
@@ -335,8 +380,8 @@ int FFmpegPlayer::decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrCo
             return data_size;
         }
 
-        audio_pkt_data = pkt.data;
-        audio_pkt_size = pkt.size;
+        audio_pkt_data = pkt->data;
+        audio_pkt_size = pkt->size;
     }
 }
 

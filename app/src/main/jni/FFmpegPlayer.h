@@ -22,6 +22,7 @@ extern "C"
 #include "utils/List.h"
 #include "utils/Thread.h"
 #include "utils/Mutex.h"
+#include "utils/Condition.h"
 
 #define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
 
@@ -65,6 +66,10 @@ namespace FFS
         int getAudioStreamIndex() { return m_nAudioStream; }
         List<AVPacket*>* getVideoPacketList() { return m_listVideoPacket; }
         List<AVPacket*>* getAudioPacketList() { return m_listAudioPacket; }
+        Mutex& getVideoMutex() { return m_videoMutex; }
+        Mutex& getAudioMutex() { return m_audioMutex; }
+        Condition& getVideoCondition() { return m_videoCnd; }
+        Condition& getAudioCondition() { return m_audioCnd; }
         bool isDecodeFinished() { return m_bIsDecodeFinished; }
         bool setDecodeFinished(bool b) { m_bIsDecodeFinished = b; }
 
@@ -77,13 +82,14 @@ namespace FFS
 
     private:
         static void* decodeInternal(void* args);
-        static void* playInternal(void* args);
+        static void* playVideoInternal(void* args);
+        static void* playAudioInternal(void* args);
         static int audioResampling(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVFrame * pAudioDecodeFrame,
                             int out_sample_fmt,
                             int out_channels,
                             int out_sample_rate,
                             uint8_t* out_buf);
-        static int decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVPacket &pkt, uint8_t *audio_buf,
+        static int decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVPacket *pkt, uint8_t *audio_buf,
                              int buf_size);
 
     private:
@@ -103,7 +109,13 @@ namespace FFS
         char m_aFileName[1024];
 
         Thread m_decodeThread;
-        Thread m_playThread;
+        Thread m_playVideoThread;
+        Thread m_playAudioThread;
+
+        Mutex m_videoMutex;
+        Mutex m_audioMutex;
+        Condition m_videoCnd;
+        Condition m_audioCnd;
 
         List<AVPacket*>* m_listVideoPacket;
         List<AVPacket*>* m_listAudioPacket;

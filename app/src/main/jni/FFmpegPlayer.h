@@ -37,8 +37,8 @@ namespace FFS
                 m_pRenderer(NULL), m_pAudio(NULL), m_pSwsContext(NULL)
         {
             memset(m_aFileName, 0, sizeof(m_aFileName));
-            m_listVideoPacket = new List<AVPacket>();
-            m_listAudioPacket = new List<AVPacket>();
+            m_listVideoPacket = new List<AVPacket*>();
+            m_listAudioPacket = new List<AVPacket*>();
         }
 
     public:
@@ -63,8 +63,8 @@ namespace FFS
         IRenderer* getRenderer() { return m_pRenderer; }
         int getVideoStreamIndex() { return m_nVideoStream; }
         int getAudioStreamIndex() { return m_nAudioStream; }
-        List<AVPacket>* getVideoPacketList() { return m_listVideoPacket; }
-        List<AVPacket>* getAudioPacketList() { return m_listAudioPacket; }
+        List<AVPacket*>* getVideoPacketList() { return m_listVideoPacket; }
+        List<AVPacket*>* getAudioPacketList() { return m_listAudioPacket; }
         bool isDecodeFinished() { return m_bIsDecodeFinished; }
         bool setDecodeFinished(bool b) { m_bIsDecodeFinished = b; }
 
@@ -105,8 +105,8 @@ namespace FFS
         Thread m_decodeThread;
         Thread m_playThread;
 
-        List<AVPacket>* m_listVideoPacket;
-        List<AVPacket>* m_listAudioPacket;
+        List<AVPacket*>* m_listVideoPacket;
+        List<AVPacket*>* m_listAudioPacket;
 
         bool m_bIsInited;
         bool m_bIsDecodeFinished;

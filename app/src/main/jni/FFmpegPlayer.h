@@ -40,6 +40,7 @@ namespace FFS
             memset(m_aFileName, 0, sizeof(m_aFileName));
             m_listVideoPacket = new List<AVPacket*>();
             m_listAudioPacket = new List<AVPacket*>();
+            m_listDisplayFrame = new List<AVFrame*>();
         }
 
     public:
@@ -64,12 +65,17 @@ namespace FFS
         IRenderer* getRenderer() { return m_pRenderer; }
         int getVideoStreamIndex() { return m_nVideoStream; }
         int getAudioStreamIndex() { return m_nAudioStream; }
+        AVStream* getVideoStream() { return m_pFormatCtx->streams[m_nVideoStream]; }
+        AVStream* getAudioStream() { return m_pFormatCtx->streams[m_nAudioStream]; }
         List<AVPacket*>* getVideoPacketList() { return m_listVideoPacket; }
         List<AVPacket*>* getAudioPacketList() { return m_listAudioPacket; }
+        List<AVFrame*>* getDisplayFrameList() { return m_listDisplayFrame; }
         Mutex& getVideoMutex() { return m_videoMutex; }
         Mutex& getAudioMutex() { return m_audioMutex; }
+        Mutex& getDisplayMutex() { return m_displayMutex; }
         Condition& getVideoCondition() { return m_videoCnd; }
         Condition& getAudioCondition() { return m_audioCnd; }
+        Condition& getDisplayCondition() { return m_displayCnd; }
         bool isDecodeFinished() { return m_bIsDecodeFinished; }
         bool setDecodeFinished(bool b) { m_bIsDecodeFinished = b; }
 
@@ -84,6 +90,7 @@ namespace FFS
         static void* decodeInternal(void* args);
         static void* playVideoInternal(void* args);
         static void* playAudioInternal(void* args);
+        static void* displayInternal(void* args);
         static int audioResampling(AVCodecContext* pCodecCtx, SwrContext* pSwrContext, AVFrame * pAudioDecodeFrame,
                             int out_sample_fmt,
                             int out_channels,
@@ -111,14 +118,18 @@ namespace FFS
         Thread m_decodeThread;
         Thread m_playVideoThread;
         Thread m_playAudioThread;
+        Thread m_displayThread;
 
         Mutex m_videoMutex;
         Mutex m_audioMutex;
+        Mutex m_displayMutex;
         Condition m_videoCnd;
         Condition m_audioCnd;
+        Condition m_displayCnd;
 
         List<AVPacket*>* m_listVideoPacket;
         List<AVPacket*>* m_listAudioPacket;
+        List<AVFrame*>* m_listDisplayFrame;
 
         bool m_bIsInited;
         bool m_bIsDecodeFinished;

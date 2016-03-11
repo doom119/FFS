@@ -5,6 +5,7 @@
 #include <SDL2/SDL_timer.h>
 #include "FFmpegPlayer.h"
 #include "utils/Mutex.h"
+#include <sys/time.h>
 
 using namespace FFS;
 Mutex gPlayVideoMutex;
@@ -144,6 +145,7 @@ int FFmpegPlayer::play()
     m_playVideoThread.start(playVideoInternal, this);
     m_playAudioThread.start(playAudioInternal, this);
     m_decodeThread.start(decodeInternal, this);
+    m_displayThread.start(displayInternal, this);
 }
 
 void* FFmpegPlayer::decodeInternal(void* args)
@@ -179,7 +181,6 @@ void* FFmpegPlayer::decodeInternal(void* args)
             AVPacket *p = new AVPacket();
             av_dup_packet(&packet);
             av_copy_packet(p, &packet);
-//            gPlayAudioMutex.lock();
             audioMutex.lock();
             audioPacketList->push_back(p);
             LOGD("FFmpegPlayer decodeInternal, audio size=%d", audioPacketList->size());
@@ -195,24 +196,21 @@ void* FFmpegPlayer::decodeInternal(void* args)
 //    pPlayer->setDecodeFinished(true);
 }
 
-void* FFmpegPlayer::playVideoInternal(void* args)
+void* FFmpegPlayer::displayInternal(void *args)
 {
-    LOGD("FFmpegPlayer playVideoInternal");
+    LOGD("FFmpegPlayer displayInternal");
     FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
+    AVStream* pVideoStream = pPlayer->getVideoStream();
     AVCodecContext *pVideoCodecCtx = pPlayer->getVideoCodecContext();
     SwsContext* pSwsContext = pPlayer->getSwsContext();
     IRenderer* pRenderer = pPlayer->getRenderer();
-    List<AVPacket*>* videoPacketList = pPlayer->getVideoPacketList();
-    Mutex& videoMutex = pPlayer->getVideoMutex();
-    Condition& videoCnd = pPlayer->getVideoCondition();
-    int videoIndex = pPlayer->getVideoStreamIndex();
+    List<AVFrame*>* displayFrameList = pPlayer->getDisplayFrameList();
+    Mutex& displayMutex = pPlayer->getDisplayMutex();
+    Condition& displayCnd = pPlayer->getDisplayCondition();
 
-    AVFrame *pFrameData = NULL;
     AVFrame *pFrameYUV = NULL;
     void *buffer = NULL;
-    int got = 0;
 
-    pFrameData = av_frame_alloc();
     pFrameYUV = av_frame_alloc();
 
     int numBytes = avpicture_get_size(AV_PIX_FMT_YUV420P, pVideoCodecCtx->width,
@@ -222,6 +220,61 @@ void* FFmpegPlayer::playVideoInternal(void* args)
                    pVideoCodecCtx->width, pVideoCodecCtx->height);
 
     pRenderer->createSurface(pVideoCodecCtx->width, pVideoCodecCtx->height);
+    while(!pPlayer->isDecodeFinished())
+    {
+        AVFrame* pFrame;
+        displayMutex.lock();
+        if(displayFrameList->size() == 0)
+        {
+            LOGD("FFmpegPlayer displayInternal wait");
+            displayCnd.wait(displayMutex);
+        }
+        List<AVFrame*>::iterator it = displayFrameList->begin();
+        displayFrameList->erase(it);
+        pFrame = *it;
+        displayMutex.unlock();
+        if(NULL == pFrame)
+        {
+            LOGD("FFmpegPlayer displayInternal, get display frame error");
+            continue;
+        }
+
+        int64_t pts = av_frame_get_best_effort_timestamp(pFrame);
+//                pts *= av_q2d(pFormatCtc->streams[videoIndex]->time_base);
+        double frame_delay = av_q2d(pVideoStream->codec->time_base);
+        LOGD("FFmpegPlayer displayInternal pts=%llu, frame_delay=%f", pts, frame_delay);
+        sws_scale(pSwsContext, (const uint8_t *const *) pFrame->data,
+                  pFrame->linesize, 0, pVideoCodecCtx->height,
+                  pFrameYUV->data, pFrameYUV->linesize);
+        pRenderer->render(pFrameYUV->data[0], pFrameYUV->linesize[0],
+                          pFrameYUV->data[1], pFrameYUV->linesize[1],
+                          pFrameYUV->data[2], pFrameYUV->linesize[2]);
+        av_frame_free(&pFrame);
+    }
+    pRenderer->destroySurface();
+
+    av_frame_free(&pFrameYUV);
+}
+
+void* FFmpegPlayer::playVideoInternal(void* args)
+{
+    LOGD("FFmpegPlayer playVideoInternal");
+    FFmpegPlayer* pPlayer = (FFmpegPlayer*)args;
+    AVCodecContext *pVideoCodecCtx = pPlayer->getVideoCodecContext();
+    List<AVPacket*>* videoPacketList = pPlayer->getVideoPacketList();
+    List<AVFrame*>* displayFrameList = pPlayer->getDisplayFrameList();
+    Mutex& displayMutex = pPlayer->getDisplayMutex();
+    Condition& displayCnd = pPlayer->getDisplayCondition();
+    Mutex& videoMutex = pPlayer->getVideoMutex();
+    Condition& videoCnd = pPlayer->getVideoCondition();
+    int videoIndex = pPlayer->getVideoStreamIndex();
+
+    AVFrame *pFrameData = NULL;
+    void *buffer = NULL;
+    int got = 0;
+
+    pFrameData = av_frame_alloc();
+
     while(!pPlayer->isDecodeFinished())
     {
         AVPacket *pVideoPacket = NULL;
@@ -242,12 +295,11 @@ void* FFmpegPlayer::playVideoInternal(void* args)
             continue;
         }
 
-//        LOGD("playInternal, stream index=%d", pPlayer->getVideoStreamIndex());
         if(pVideoPacket->stream_index == videoIndex)
         {
             struct timeval start, end;
             gettimeofday(&start, NULL);
-            LOGD("playInternal, video size=%d", videoPacketList->size());
+            LOGD("playVideoInternal, video size=%d", videoPacketList->size());
 
             int len = avcodec_decode_video2(pVideoCodecCtx, pFrameData, &got, pVideoPacket);
             if(len < 0)
@@ -257,29 +309,23 @@ void* FFmpegPlayer::playVideoInternal(void* args)
             }
             if (got)
             {
-                int64_t pts = av_frame_get_best_effort_timestamp(pFrameData);
-//                pts *= av_q2d(pFormatCtc->streams[videoIndex]->time_base);
-                LOGD("FFmpegPlayer playVideoInternal pts=%llu", pts);
-                sws_scale(pSwsContext, (const uint8_t *const *) pFrameData->data,
-                          pFrameData->linesize, 0, pVideoCodecCtx->height,
-                          pFrameYUV->data, pFrameYUV->linesize);
-                pRenderer->render(pFrameYUV->data[0], pFrameYUV->linesize[0],
-                                    pFrameYUV->data[1], pFrameYUV->linesize[1],
-                                    pFrameYUV->data[2], pFrameYUV->linesize[2]);
+                AVFrame* pFrame = av_frame_clone(pFrameData);
+
+                displayMutex.lock();
+                displayFrameList->push_back(pFrame);
+                displayCnd.signal();
+                displayMutex.unlock();
             }
 
             gettimeofday(&end, NULL);
             int cost = 1000000 * (end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
             LOGD("FFmpegPlayer playVideoInternal, video cost=%d", cost);
-            av_free_packet(pVideoPacket);
         }
 
-        SDL_Delay(10);
+        av_free_packet(pVideoPacket);
     }
-    pRenderer->destroySurface();
 
     av_free(buffer);
-    av_frame_free(&pFrameYUV);
     av_frame_free(&pFrameData);
 }
 
@@ -334,7 +380,7 @@ void* FFmpegPlayer::playAudioInternal(void* args)
             LOGD("FFmpegPlayer playAudioInternal, audio cost=%d", cost);
             av_free_packet(pAudioPacket);
         }
-        SDL_Delay(10);
+//        SDL_Delay(20);
     }
 
     av_frame_free(&pFrameAudio);
@@ -368,6 +414,8 @@ int FFmpegPlayer::decodeAudioFrame(AVCodecContext* pCodecCtx, SwrContext* pSwrCo
             data_size = 0;
             if (got_frame)
             {
+                uint32_t pts = av_frame_get_best_effort_timestamp(&frame);
+                LOGD("FFmpegPlayer playAudioInternal pts=%llu", pts);
                 data_size = audioResampling(pCodecCtx, pSwrContext, &frame, AV_SAMPLE_FMT_S16, frame.channels, frame.sample_rate, audio_buf);
 //                LOGD("FFmpegPlayer decodeAudioFrame, data_size=%d", data_size);
             }

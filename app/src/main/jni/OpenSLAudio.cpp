@@ -3,11 +3,14 @@
 //
 
 #include "OpenSLAudio.h"
+#include "utils/Condition.h"
 #include <unistd.h>
 
 using namespace FFS;
 
 Mutex gMutex;
+Condition gCnd;
+AudioData* m_pLastData = NULL;
 
 int OpenSLAudio::init()
 {
@@ -57,7 +60,7 @@ int OpenSLAudio::init()
     // configure audio source
     SLDataLocator_AndroidSimpleBufferQueue loc_bufq = {
             SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, //locatorType
-            2 //numBuffers
+            3 //numBuffers
             };
     SLDataFormat_PCM format_pcm = {
             SL_DATAFORMAT_PCM, //formatType, must be PCM here
@@ -135,49 +138,59 @@ int OpenSLAudio::init()
 
 int OpenSLAudio::play(uint8_t* data, uint32_t size)
 {
-    LOGD("OpenSLAudio play, data=%d, size=%d, tid=%d", data, size, gettid());
     if(size <= 0 || NULL == data)
         return AUDIO_ERROR_PLAY;
 
-    (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
+//    (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
 
-//    AutoMutex lock(gMutex);
-//    if(m_audioDataList.size() == 0)
-//    {
-//        (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
-//    }
-//    else
-//    {
-//        AudioData *pAudioData = new AudioData();
-//        pAudioData->data = new uint8_t[size];
-//        memcpy(pAudioData->data, data, size);
-//        pAudioData->size = size;
-//        m_audioDataList.push_back(pAudioData);
-//        LOGD("OpenSLAudio play, list size=%d", m_audioDataList.size());
-//    }
+    AudioData *pAudioData = new AudioData();
+    pAudioData->data = new uint8_t[size];
+    memcpy(pAudioData->data, data, size);
+    pAudioData->size = size;
+
+    if(m_bIsFirst)
+    {
+        m_pLastData = pAudioData;
+        (*m_bufferQueue)->Enqueue(m_bufferQueue, data, size);
+        m_bIsFirst = false;
+        return 0;
+    }
+
+
+    gMutex.lock();
+    LOGD("OpenSLAudio play1, list size=%d", m_audioDataList.size());
+    m_audioDataList.push_back(pAudioData);
+    gMutex.unlock();
 
     return 0;
 }
 
+
 void OpenSLAudio::playerCallback(SLAndroidSimpleBufferQueueItf bufferQueueItf, void *context)
 {
-//    if(NULL == context)
-//        return;
-//
-//    AutoMutex lock(gMutex);
-//    List<AudioData*>* pDataList = (List<AudioData*>*)context;
-//    LOGD("OpenSLAudio playerCallback, list size=%d, tid=%d", pDataList->size(), gettid());
-//    if(pDataList->size() <= 0)
-//        return;
-//
-//    SLresult result;
-//
-//    List<AudioData*>::iterator it = pDataList->begin();
-//    //LOGD("OpenSLAudio it=%d, data=%d, size=%d", *it, (*it)->data, (*it)->size);
-//    result = (*bufferQueueItf)->Enqueue(bufferQueueItf, (*it)->data, (*it)->size);
-//    pDataList->erase(it);
-//    if(SL_RESULT_SUCCESS != result)
-//    {
-//        LOGW("OpenSLAudio play error");
-//    }
+    if(NULL == context)
+        return;
+
+    gMutex.lock();
+    List<AudioData*>* pDataList = (List<AudioData*>*)context;
+    LOGD("OpenSLAudio playerCallback, list size=%d, tid=%d", pDataList->size(), gettid());
+    if(pDataList->size() <= 0)
+    {
+        (*bufferQueueItf)->Enqueue(bufferQueueItf, m_pLastData->data, m_pLastData->size);
+        gMutex.unlock();
+        return;
+    }
+
+    SLresult result;
+
+    List<AudioData*>::iterator it = pDataList->begin();
+    //LOGD("OpenSLAudio it=%d, data=%d, size=%d", *it, (*it)->data, (*it)->size);
+    m_pLastData = *it;
+    result = (*bufferQueueItf)->Enqueue(bufferQueueItf, (*it)->data, (*it)->size);
+    pDataList->erase(it);
+    gMutex.unlock();
+    if(SL_RESULT_SUCCESS != result)
+    {
+        LOGW("OpenSLAudio play error");
+    }
 }

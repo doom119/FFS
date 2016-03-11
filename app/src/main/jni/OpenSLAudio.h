@@ -29,7 +29,7 @@ namespace FFS
                         m_engineInterface(NULL), m_playInterface(NULL),
                         m_effectSendInterface(NULL), m_volumeInterface(NULL)
         {
-            m_bIsFirst = false;
+            m_bIsFirst = true;
         }
 
         virtual ~OpenSLAudio(){}
@@ -54,6 +54,7 @@ namespace FFS
         List<AudioData*> m_audioDataList;
         bool m_bIsFirst;
     };
+
 };
 
 #endif //FFS_OPENSLAUDIO_H

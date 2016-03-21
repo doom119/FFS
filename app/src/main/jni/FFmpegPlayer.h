@@ -14,6 +14,7 @@ extern "C"
 #include "libswresample/swresample.h"
 #include "libavutil/error.h"
 #include "libavutil/opt.h"
+#include <libavutil/time.h>
 };
 
 #include "FFS.h"
@@ -41,6 +42,9 @@ namespace FFS
             m_listVideoPacket = new List<AVPacket*>();
             m_listAudioPacket = new List<AVPacket*>();
             m_listDisplayFrame = new List<AVFrame*>();
+            m_frameLastDelay = 0;
+            m_frameLastPts = 0;
+            m_frameTimer = 1.0 * av_gettime() / AV_TIME_BASE;
         }
 
     public:
@@ -78,6 +82,12 @@ namespace FFS
         Condition& getDisplayCondition() { return m_displayCnd; }
         bool isDecodeFinished() { return m_bIsDecodeFinished; }
         bool setDecodeFinished(bool b) { m_bIsDecodeFinished = b; }
+        double getFrameLastPts() { return m_frameLastPts; }
+        double getFrameLastDelay() { return m_frameLastDelay; }
+        double getFrameTimer() { return m_frameTimer; }
+        void setFrameLastPts(double pts) { m_frameLastPts = pts; }
+        void setFrameLastDelay(double delay) { m_frameLastDelay = delay; }
+        void setFrameTimer(double t) { m_frameTimer = t; }
 
     public:
         virtual ~FFmpegPlayer()
@@ -114,6 +124,10 @@ namespace FFS
         int m_nVideoStream;
         int m_nAudioStream;
         char m_aFileName[1024];
+
+        double m_frameLastDelay;
+        double m_frameLastPts;
+        double m_frameTimer;
 
         Thread m_decodeThread;
         Thread m_playVideoThread;

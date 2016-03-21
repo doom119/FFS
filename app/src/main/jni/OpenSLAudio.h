@@ -9,6 +9,7 @@
 #include "FFS.h"
 #include "utils/List.h"
 #include "utils/Mutex.h"
+#include "utils/Condition.h"
 #include <SLES/OpenSLES_Android.h>
 
 #ifndef FFS_OPENSLAUDIO_H
@@ -30,14 +31,26 @@ namespace FFS
                         m_effectSendInterface(NULL), m_volumeInterface(NULL)
         {
             m_bIsFirst = true;
+            m_nPlayedBytes = 0;
+            m_nSampleRate = 48000;
+            m_nChannels = 1;
         }
 
         virtual ~OpenSLAudio(){}
 
     public:
-        int init();
+        int init(uint32_t sample_rate, uint32_t channels);
         int play(uint8_t* data, uint32_t size);
+        double getClock();
+        List<AudioData*>& getAudioDataList() { return m_audioDataList; }
+        Mutex& getMutex() { return m_mutex; }
+        Condition& getCondition() { return m_condition; }
+
         static void playerCallback(SLAndroidSimpleBufferQueueItf bufferQueueItf, void *context);
+
+    private:
+        uint64_t getPlayedBytes() { return m_nPlayedBytes; }
+        void setPlayedBytes(uint64_t bytes) { m_nPlayedBytes = bytes; }
 
     private:
         SLObjectItf m_engineObject;
@@ -51,8 +64,15 @@ namespace FFS
 
         SLAndroidSimpleBufferQueueItf m_bufferQueue;
 
+        Mutex m_mutex;
+        Condition m_condition;
+
         List<AudioData*> m_audioDataList;
         bool m_bIsFirst;
+
+        uint64_t m_nPlayedBytes;
+        uint32_t m_nSampleRate;
+        uint32_t m_nChannels;
     };
 
 };

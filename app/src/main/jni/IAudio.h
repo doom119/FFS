@@ -12,8 +12,9 @@ namespace FFS
     class IAudio
     {
     public:
-        virtual int init() = 0;
+        virtual int init(uint32_t sample_rate, uint32_t channels) = 0;
         virtual int play(uint8_t* data, uint32_t size) = 0;
+        virtual double getClock() = 0;
     };
 };
 

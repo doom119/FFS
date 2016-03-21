@@ -18,7 +18,7 @@ void avlog_callback(void *x, int level, const char *fmt, va_list ap)
 
 int FFmpegPlayer::init(IRenderer *renderer, IAudio* audio)
 {
-    LOGD("FFmpegPlayer init");
+    LOGD("FFmpegPlayer init, relative_time=%llu, time=%llu", av_gettime_relative(), av_gettime());
     if(m_bIsInited)
     {
         LOGD("FFmpegPlayer has already initiated");
@@ -41,7 +41,7 @@ int FFmpegPlayer::init(IRenderer *renderer, IAudio* audio)
     m_pRenderer->init();
 
     m_pAudio = audio;
-    m_pAudio->init();
+    m_pAudio->init(48000, 1);
 
     av_register_all();
     av_log_set_callback(avlog_callback);
@@ -204,6 +204,7 @@ void* FFmpegPlayer::displayInternal(void *args)
     AVCodecContext *pVideoCodecCtx = pPlayer->getVideoCodecContext();
     SwsContext* pSwsContext = pPlayer->getSwsContext();
     IRenderer* pRenderer = pPlayer->getRenderer();
+    IAudio* pAudio = pPlayer->getAudio();
     List<AVFrame*>* displayFrameList = pPlayer->getDisplayFrameList();
     Mutex& displayMutex = pPlayer->getDisplayMutex();
     Condition& displayCnd = pPlayer->getDisplayCondition();
@@ -239,10 +240,37 @@ void* FFmpegPlayer::displayInternal(void *args)
             continue;
         }
 
-        int64_t pts = av_frame_get_best_effort_timestamp(pFrame);
-//                pts *= av_q2d(pFormatCtc->streams[videoIndex]->time_base);
-        double frame_delay = av_q2d(pVideoStream->codec->time_base);
-        LOGD("FFmpegPlayer displayInternal pts=%llu, frame_delay=%f", pts, frame_delay);
+        double lastDelay = pPlayer->getFrameLastDelay();
+        double lastPts = pPlayer->getFrameLastPts();
+        double frameTimer = pPlayer->getFrameTimer();
+        double pts = av_frame_get_best_effort_timestamp(pFrame);
+        pts *= av_q2d(pVideoStream->time_base);
+//        double frame_delay = av_q2d(pVideoStream->codec->time_base);
+        double delay = pts - lastPts;
+        if(delay <= 0 || delay >= 1.0)
+        {
+            delay = lastDelay;
+        }
+        pPlayer->setFrameLastDelay(delay);
+        pPlayer->setFrameLastPts(pts);
+        double diff = pts - pAudio->getClock();
+        double throld = (delay > 0.01) ? delay : 0.01;
+        if(diff <= -throld)
+        {
+            delay += diff;
+        }
+        else if(diff >= throld)
+        {
+            delay *= 2;
+        }
+        frameTimer += delay;
+        pPlayer->setFrameTimer(frameTimer);
+        double actual_delay = frameTimer - 1.0 * av_gettime() / AV_TIME_BASE;
+        if(actual_delay < 0.01)
+            actual_delay = 0.01;
+        LOGD("FFmpegPlayer displayInternal pts=%f, lastDelay=%f, lastPts=%f, audio clock=%f, delay=%f, diff=%f, actual_delay=%f", pts, lastDelay, lastPts, pAudio->getClock(), delay, diff, actual_delay);
+        av_usleep(actual_delay*1000000);
+
         sws_scale(pSwsContext, (const uint8_t *const *) pFrame->data,
                   pFrame->linesize, 0, pVideoCodecCtx->height,
                   pFrameYUV->data, pFrameYUV->linesize);
@@ -272,6 +300,7 @@ void* FFmpegPlayer::playVideoInternal(void* args)
     AVFrame *pFrameData = NULL;
     void *buffer = NULL;
     int got = 0;
+    int skipped = 0;
 
     pFrameData = av_frame_alloc();
 
@@ -299,7 +328,7 @@ void* FFmpegPlayer::playVideoInternal(void* args)
         {
             struct timeval start, end;
             gettimeofday(&start, NULL);
-            LOGD("playVideoInternal, video size=%d", videoPacketList->size());
+            LOGD("playVideoInternal, video size=%d, pts=%d", videoPacketList->size(), pVideoPacket->pts);
 
             int len = avcodec_decode_video2(pVideoCodecCtx, pFrameData, &got, pVideoPacket);
             if(len < 0)
@@ -316,10 +345,14 @@ void* FFmpegPlayer::playVideoInternal(void* args)
                 displayCnd.signal();
                 displayMutex.unlock();
             }
+            else
+            {
+                skipped ++;
+            }
 
             gettimeofday(&end, NULL);
             int cost = 1000000 * (end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
-            LOGD("FFmpegPlayer playVideoInternal, video cost=%d", cost);
+            LOGD("FFmpegPlayer playVideoInternal, video cost=%d, skipped=%d", cost, skipped);
         }
 
         av_free_packet(pVideoPacket);
